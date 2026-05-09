@@ -89,6 +89,40 @@ pytest tests/test_ingest.py::test_ingest_returns_202 -v
 
 > Tests use `fakeredis` — no running Redis instance required.
 
+#### Security testing
+
+**SAST — Bandit** (static analysis, no running service required):
+
+```bash
+cd Log-Ingestion-and-Metrics
+
+pip install bandit
+bandit -r app
+```
+
+**DAST — OWASP ZAP** (dynamic analysis, requires Docker and running service):
+
+```bash
+# 1. Start the stack
+docker compose up --build -d
+
+# 2. Run ZAP API scan against the OpenAPI spec
+docker run --rm --network host \
+  -v /tmp/zap:/zap/wrk \
+  ghcr.io/zaproxy/zaproxy:stable \
+  zap-api-scan.py \
+  -t http://localhost:8000/openapi.json \
+  -f openapi \
+  -r /zap/wrk/zap-report.html \
+  -J /zap/wrk/zap-report.json \
+  -I
+
+# 3. Stop the stack
+docker compose down
+```
+
+HTML and JSON reports are saved to `/tmp/zap/`.
+
 #### Environment variables
 
 | Variable                    | Default                    | Description                              |
