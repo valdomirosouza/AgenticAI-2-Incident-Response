@@ -41,6 +41,16 @@ docker compose up --build
 
 API available at `http://localhost:8000` · Docs at `http://localhost:8000/docs`
 
+**Stopping:**
+
+```bash
+# Stop containers (preserves Redis data volume)
+docker compose down
+
+# Stop and remove data volume
+docker compose down -v
+```
+
 **Without Docker:**
 
 ```bash
