@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.redis_client import close_redis, init_redis
-from app.routers import ingest, metrics
+from app.routers import health, ingest, metrics
 
 
 @asynccontextmanager
@@ -19,5 +19,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(health.router)
 app.include_router(ingest.router)
 app.include_router(metrics.router)
