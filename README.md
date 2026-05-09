@@ -33,6 +33,16 @@ FastAPI service that ingests HAProxy logs and exposes aggregated metrics via Red
 
 #### Quickstart
 
+**With Docker (recommended):**
+
+```bash
+docker compose up --build
+```
+
+API available at `http://localhost:8000` · Docs at `http://localhost:8000/docs`
+
+**Without Docker:**
+
 ```bash
 # Install dependencies
 pip install -r Log-Ingestion-and-Metrics/requirements.txt
