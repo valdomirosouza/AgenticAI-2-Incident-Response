@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import redis.asyncio as aioredis
@@ -60,7 +60,7 @@ async def get_response_time_percentiles(redis: aioredis.Redis) -> dict:
 
 
 async def get_rps(redis: aioredis.Redis, minutes: int = 60) -> dict:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     keys = [
         f"metrics:rps:{(now - timedelta(minutes=i)).strftime('%Y-%m-%dT%H:%M')}"
         for i in range(minutes)
