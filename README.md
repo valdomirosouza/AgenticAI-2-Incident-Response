@@ -63,10 +63,31 @@ redis-cli ping
 
 # Run the service
 uvicorn app.main:app --reload --port 8000
-
-# Run tests
-cd Log-Ingestion-and-Metrics && pytest
 ```
+
+#### Running tests
+
+```bash
+cd Log-Ingestion-and-Metrics
+
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run all tests
+pytest
+
+# Run a specific test file
+pytest tests/test_ingest.py -v
+
+# Run a specific test
+pytest tests/test_ingest.py::test_ingest_returns_202 -v
+```
+
+> Tests use `fakeredis` — no running Redis instance required.
 
 #### Environment variables
 
