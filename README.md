@@ -14,11 +14,12 @@ FastAPI service that ingests HAProxy logs and exposes aggregated metrics via Red
 
 #### API
 
-| Method | Endpoint     | Description                        |
-| ------ | ------------ | ---------------------------------- |
-| `GET`  | `/health`    | Liveness check (API + Redis)       |
-| `POST` | `/logs`      | Ingest a HAProxy log entry (JSON)  |
-| `GET`  | `/metrics/*` | Read aggregated metrics from Redis |
+| Method | Endpoint              | Description                              |
+| ------ | --------------------- | ---------------------------------------- |
+| `GET`  | `/health`             | Liveness check (API + Redis)             |
+| `POST` | `/logs`               | Ingest a HAProxy log entry (JSON)        |
+| `GET`  | `/metrics/*`          | Read aggregated metrics from Redis       |
+| `GET`  | `/prometheus/metrics` | Prometheus scrape endpoint (OpenMetrics) |
 
 #### Metrics collected
 
@@ -123,13 +124,66 @@ docker compose down
 
 HTML and JSON reports are saved to `/tmp/zap/`.
 
+#### Observability
+
+The service implements the three observability pillars out of the box.
+
+**Logs — structured JSON**
+
+Every request is logged to stdout in JSON with the following fields:
+
+```json
+{
+  "timestamp": "2026-05-09T23:00:00.000Z",
+  "level": "INFO",
+  "logger": "app.access",
+  "message": "http_request",
+  "method": "POST",
+  "path": "/logs",
+  "status_code": 202,
+  "duration_ms": 4.21,
+  "request_id": "a1b2c3d4-..."
+}
+```
+
+Pass `X-Request-ID` in the request header to propagate a correlation ID across services. If absent, one is generated automatically and returned in the response.
+
+Set `LOG_FORMAT=text` for human-readable output in local development.
+
+**Metrics — Prometheus**
+
+Prometheus metrics are exposed at `GET /prometheus/metrics`. Compatible with any standard scraper (Prometheus, Grafana Agent, OpenTelemetry Collector).
+
+Metrics exposed (Golden Signals):
+
+| Metric                          | Type      | Description                           |
+| ------------------------------- | --------- | ------------------------------------- |
+| `http_requests_total`           | Counter   | Request count by method, path, status |
+| `http_request_duration_seconds` | Histogram | Latency distribution (P50/P95/P99)    |
+| `http_requests_inprogress`      | Gauge     | In-flight requests (Saturation proxy) |
+
+**Traces — OpenTelemetry**
+
+FastAPI routes and Redis commands are auto-instrumented with OpenTelemetry spans.
+
+- **Development (default):** traces printed to stdout via `ConsoleSpanExporter`
+- **Production:** set `OTEL_EXPORTER_OTLP_ENDPOINT` to send traces to any OTLP-compatible backend (Jaeger, Tempo, Datadog, etc.)
+
+```bash
+# Example: export to a local Jaeger instance
+OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+```
+
 #### Environment variables
 
-| Variable                    | Default                    | Description                              |
-| --------------------------- | -------------------------- | ---------------------------------------- |
-| `REDIS_URL`                 | `redis://localhost:6379/0` | Redis connection string                  |
-| `RESPONSE_TIME_MAX_ENTRIES` | `100000`                   | Max entries in response times sorted set |
-| `LOG_LEVEL`                 | `info`                     | Uvicorn log level                        |
+| Variable                      | Default                      | Description                              |
+| ----------------------------- | ---------------------------- | ---------------------------------------- |
+| `REDIS_URL`                   | `redis://localhost:6379/0`   | Redis connection string                  |
+| `RESPONSE_TIME_MAX_ENTRIES`   | `100000`                     | Max entries in response times sorted set |
+| `LOG_LEVEL`                   | `info`                       | Uvicorn log level                        |
+| `LOG_FORMAT`                  | `json`                       | Log output format: `json` or `text`      |
+| `OTEL_SERVICE_NAME`           | `log-ingestion-and-metrics`  | Service name in traces                   |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty — console exporter)_ | OTLP gRPC endpoint for trace export      |
 
 Copy `.env.example` to `.env` and adjust as needed.
 
