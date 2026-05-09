@@ -1,9 +1,12 @@
+import logging
+
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from app.redis_client import get_redis
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["health"])
 
 
@@ -12,8 +15,8 @@ async def health(redis: aioredis.Redis = Depends(get_redis)):
     redis_ok = False
     try:
         redis_ok = await redis.ping()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Redis health check failed: %s", exc)
 
     status = "healthy" if redis_ok else "degraded"
     return JSONResponse(
