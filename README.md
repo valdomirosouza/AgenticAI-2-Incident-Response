@@ -16,6 +16,7 @@ FastAPI service that ingests HAProxy logs and exposes aggregated metrics via Red
 
 | Method | Endpoint     | Description                        |
 | ------ | ------------ | ---------------------------------- |
+| `GET`  | `/health`    | Liveness check (API + Redis)       |
 | `POST` | `/logs`      | Ingest a HAProxy log entry (JSON)  |
 | `GET`  | `/metrics/*` | Read aggregated metrics from Redis |
 
