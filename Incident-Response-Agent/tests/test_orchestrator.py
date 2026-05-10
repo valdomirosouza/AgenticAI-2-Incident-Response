@@ -125,7 +125,10 @@ async def test_analyze_endpoint_returns_200(client):
         "recommendations": [],
     }
 
-    with patch("app.agents.specialists.latency.create_latency_agent") as mock_la, \
+    import app.config as _cfg
+
+    with patch.object(_cfg.settings, "anthropic_api_key", "test-key"), \
+         patch("app.agents.specialists.latency.create_latency_agent") as mock_la, \
          patch("app.agents.specialists.errors.create_errors_agent") as mock_ea, \
          patch("app.agents.specialists.saturation.create_saturation_agent") as mock_sa, \
          patch("app.agents.specialists.traffic.create_traffic_agent") as mock_ta, \
