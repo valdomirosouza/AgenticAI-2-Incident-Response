@@ -11,6 +11,31 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  incident-response-agent:
+    build:
+      context: ./Incident-Response-Agent
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./Incident-Response-Agent/.env.example
+    environment:
+      METRICS_API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   redis:
