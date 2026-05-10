@@ -4,6 +4,87 @@ Research project exploring **Agentic AI as a Copilot** for reducing **MTTD** (Me
 
 ---
 
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph sources["Log Sources"]
+        HA["HAProxy / Load Balancer"]
+    end
+
+    subgraph compose["Docker Compose"]
+        subgraph service["Log-Ingestion-and-Metrics  ·  FastAPI :8000"]
+            direction TB
+
+            subgraph middleware["Middleware"]
+                RLM["RequestLoggingMiddleware\nX-Request-ID  ·  JSON access log"]
+                SHM["SecurityHeadersMiddleware\nX-Content-Type-Options  ·  CORP"]
+            end
+
+            subgraph routers["Routers"]
+                RI["POST /logs"]
+                RM["GET /metrics/*\noverview · status-codes · backends\nfrontends · response-times · rps · saturation"]
+                RH["GET /health"]
+                RP["GET /prometheus/metrics"]
+            end
+
+            subgraph services["Services"]
+                SI["ingestion.py\nprocess_log()"]
+                SM["metrics.py\nget_overview()  ·  get_saturation()\nget_response_time_percentiles()"]
+            end
+
+            subgraph observability["Observability"]
+                OT["OpenTelemetry SDK\nFastAPI + Redis auto-instrumentation"]
+                PI["prometheus-fastapi-instrumentator\nLatency · Traffic · Errors · Saturation"]
+                JL["python-json-logger\nStructured JSON stdout"]
+            end
+        end
+
+        REDIS[("Redis  :6379\n─────────────────\nmetrics:requests:total\nmetrics:status:{code}\nmetrics:errors:4xx / 5xx\nmetrics:response_times  ← P50/P95/P99\nmetrics:rps:{YYYY-MM-DDTHH:MM}\nmetrics:backend:{name}\nmetrics:frontend:{name}")]
+    end
+
+    subgraph obs_backends["Observability Backends  (external / optional)"]
+        PROM["Prometheus"]
+        GRAFANA["Grafana"]
+        COLLECTOR["OTel Collector"]
+        JAEGER["Jaeger / Tempo"]
+        LOKI["Loki / ELK / Splunk"]
+    end
+
+    %% Ingestion path
+    HA -->|"POST /logs  (JSON)"| RI
+    RI --> SI
+    SI -->|"pipeline: INCR · ZADD · EXPIRE"| REDIS
+
+    %% Metrics query path
+    RM --> SM
+    SM -->|"MGET · ZRANGE · INFO"| REDIS
+
+    %% Health check
+    RH -->|"PING"| REDIS
+
+    %% Observability outputs
+    RP -->|"scrape"| PROM
+    PROM --> GRAFANA
+    OT -->|"OTLP gRPC"| COLLECTOR
+    COLLECTOR --> JAEGER
+    JL -->|"stdout JSON"| LOKI
+
+    %% Middleware wraps all routes
+    middleware -.->|"wraps"| routers
+```
+
+### Four Golden Signals coverage
+
+| Signal         | How it is measured                                                                                                         |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **Latency**    | P50 / P95 / P99 via `GET /metrics/response-times` · Histogram at `GET /prometheus/metrics`                                 |
+| **Traffic**    | RPS per minute via `GET /metrics/rps` · `http_requests_total` counter in Prometheus                                        |
+| **Errors**     | Error counts + rates (%) via `GET /metrics/overview` · `http_requests_total{status="5xx"}` in Prometheus                   |
+| **Saturation** | Redis memory, clients, rejected connections via `GET /metrics/saturation` · `http_requests_inprogress` gauge in Prometheus |
+
+---
+
 ## Modules
 
 ### `Log-Ingestion-and-Metrics`
