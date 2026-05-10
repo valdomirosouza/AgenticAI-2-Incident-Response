@@ -4,10 +4,85 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Agentic AI Incident Response system. The `Log-Ingestion-and-Metrics/` module is a single FastAPI service with two route groups:
+Agentic AI Incident Response system with two modules:
 
-- **Ingestion API** — receives HAProxy logs in JSON format and stores metrics in Redis
-- **Metrics API** — reads aggregated metrics from Redis
+- **`Log-Ingestion-and-Metrics/`** — FastAPI service that ingests HAProxy logs and exposes aggregated metrics via Redis (port 8000)
+- **`Incident-Response-Agent/`** — Multi-agent AI copilot that queries the metrics service and produces structured `IncidentReport` objects using Claude tool-use (port 8001)
+
+Both services run together via `docker compose up --build` from the project root.
+
+## Module: Incident-Response-Agent
+
+### Commands
+
+```bash
+cd Incident-Response-Agent
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run development server (requires ANTHROPIC_API_KEY in .env)
+uvicorn app.main:app --reload --port 8001
+
+# Run tests (no API key or running services required)
+pytest
+
+# Run a single test file
+pytest tests/test_specialists.py -v
+```
+
+### Architecture
+
+```
+Incident-Response-Agent/
+  app/
+    main.py                    # FastAPI app, SecurityHeadersMiddleware, POST /analyze
+    config.py                  # Settings (ANTHROPIC_API_KEY, thresholds, model)
+    agents/
+      orchestrator.py          # Runs 4 specialists via asyncio.gather, calls Claude to synthesize
+      specialists/
+        base.py                # SpecialistAgent: tool-use loop until stop_reason != "tool_use"
+        latency.py             # Latency specialist — GET /metrics/response-times
+        errors.py              # Errors specialist  — GET /metrics/overview + /status-codes
+        saturation.py          # Saturation specialist — GET /metrics/saturation
+        traffic.py             # Traffic specialist  — GET /metrics/rps + /backends
+    tools/
+      metrics_client.py        # httpx async client wrapping all Log-Ingestion-and-Metrics endpoints
+    models/
+      report.py                # SpecialistFinding, IncidentReport (Pydantic), Severity enum
+  tests/
+    conftest.py                # FakeTextBlock, FakeToolUseBlock, FakeResponse helpers + client fixture
+    test_specialists.py        # Per-specialist unit tests with mocked Anthropic + metrics client
+    test_orchestrator.py       # Orchestrator integration tests + /analyze endpoint test
+    test_metrics_client.py     # HTTP client unit tests with mocked httpx
+  requirements.txt
+  .env.example                 # ANTHROPIC_API_KEY= (empty — .env is loaded by docker-compose)
+```
+
+### Key Design Decisions
+
+- **Multi-agent pattern**: each specialist is an independent Claude API call with its own system prompt and tools; the orchestrator makes a fifth call to synthesize all four findings.
+- **Tool-use loop** (`base.py`): sends messages to Claude, executes any `tool_use` blocks by calling the metrics HTTP API, appends results, and loops until `stop_reason == "end_turn"`.
+- **Parallel execution**: `asyncio.gather(*[agent.analyze() for agent in agents])` runs all specialists concurrently, bounded only by Claude API latency.
+- **Graceful degradation**: JSON parse failures in specialist or orchestrator responses fall back to a safe `SpecialistFinding` / `IncidentReport` with WARNING severity and raw text details.
+- **Security**: returns `503` with empty body when `ANTHROPIC_API_KEY` is not configured; `SecurityHeadersMiddleware` adds `X-Content-Type-Options` and `Cross-Origin-Resource-Policy` to all responses.
+- **Testability**: tool handlers reference `_mc.function` (module-level lookup) so `patch("app.tools.metrics_client.X")` correctly intercepts calls inside lambdas at test time.
+
+### Environment Variables
+
+| Variable                       | Default                 | Description                                  |
+| ------------------------------ | ----------------------- | -------------------------------------------- |
+| `ANTHROPIC_API_KEY`            | _(empty)_               | Anthropic API key — required for /analyze    |
+| `METRICS_API_URL`              | `http://localhost:8000` | URL of the Log-Ingestion-and-Metrics service |
+| `MODEL`                        | `claude-sonnet-4-6`     | Claude model used by all agents              |
+| `MAX_TOKENS`                   | `2048`                  | Max tokens per agent call                    |
+| `LATENCY_P95_THRESHOLD_MS`     | `500`                   | P95 WARNING threshold (ms)                   |
+| `LATENCY_P99_THRESHOLD_MS`     | `1000`                  | P99 CRITICAL threshold (ms)                  |
+| `ERROR_RATE_5XX_THRESHOLD_PCT` | `5.0`                   | 5xx rate WARNING threshold (%)               |
+| `ERROR_RATE_4XX_THRESHOLD_PCT` | `20.0`                  | 4xx rate WARNING threshold (%)               |
+| `MEMORY_USAGE_THRESHOLD_PCT`   | `80.0`                  | Redis memory WARNING threshold (%)           |
+
+---
 
 ## Module: Log-Ingestion-and-Metrics
 
