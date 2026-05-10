@@ -13,6 +13,20 @@ flowchart TB
     end
 
     subgraph compose["Docker Compose"]
+
+        subgraph agent["Incident-Response-Agent  ·  FastAPI :8001"]
+            direction TB
+            ORCH["Orchestrator\nasyncio.gather — runs specialists in parallel"]
+            subgraph specialists["Specialist Agents  (Claude claude-sonnet-4-6 + tool use)"]
+                SLA["Latency\nP50 · P95 · P99"]
+                SEA["Errors\n4xx / 5xx rates"]
+                SSA["Saturation\nRedis resources"]
+                STA["Traffic\nRPS / backends"]
+            end
+            ORCH -->|"spawn"| specialists
+            specialists -->|"SpecialistFinding"| ORCH
+        end
+
         subgraph service["Log-Ingestion-and-Metrics  ·  FastAPI :8000"]
             direction TB
 
@@ -63,6 +77,9 @@ flowchart TB
     %% Health check
     RH -->|"PING"| REDIS
 
+    %% Agent queries metrics service
+    specialists -->|"GET /metrics/*"| RM
+
     %% Observability outputs
     RP -->|"scrape"| PROM
     PROM --> GRAFANA
@@ -87,9 +104,116 @@ flowchart TB
 
 ## Modules
 
+### `Incident-Response-Agent`
+
+Multi-agent AI copilot that analyzes the Four Golden Signals and produces a structured `IncidentReport` with diagnosis and remediation recommendations. Designed to reduce MTTD and MTTR for on-call engineers.
+
+**Stack:** Python · FastAPI · Anthropic SDK · httpx
+
+#### Multi-agent design
+
+| Role                      | Description                                                                                                                              |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Orchestrator**          | Runs all four specialist agents in parallel via `asyncio.gather`, then calls Claude once more to synthesize findings into a final report |
+| **Latency Specialist**    | Calls `GET /metrics/response-times` · detects P95 > 500 ms (WARNING) or P99 > 1000 ms (CRITICAL)                                         |
+| **Errors Specialist**     | Calls `GET /metrics/overview` + `GET /metrics/status-codes` · detects 5xx rate > 5 % (WARNING) or > 10 % (CRITICAL)                      |
+| **Saturation Specialist** | Calls `GET /metrics/saturation` · detects Redis memory > 80 % or rejected connections > 0                                                |
+| **Traffic Specialist**    | Calls `GET /metrics/rps` + `GET /metrics/backends` · detects RPS drops to 0 or unexpected traffic spikes                                 |
+
+Each specialist runs a **Claude tool-use loop** (`claude-sonnet-4-6`): the model requests data via tool calls, receives the metrics JSON, and returns a structured `SpecialistFinding`.
+
+#### API
+
+| Method | Endpoint   | Description                           |
+| ------ | ---------- | ------------------------------------- |
+| `GET`  | `/health`  | Liveness check                        |
+| `POST` | `/analyze` | Run a full multi-agent analysis cycle |
+
+#### `POST /analyze` response schema
+
+```json
+{
+  "timestamp": "2026-05-09T23:00:00Z",
+  "overall_severity": "ok | warning | critical",
+  "title": "High 5xx Error Rate on api-backend",
+  "diagnosis": "The error specialist detected a 5xx rate of 12%...",
+  "recommendations": [
+    "Check api-backend application logs for stack traces",
+    "Verify backend health check endpoints",
+    "Consider rolling back the last deployment"
+  ],
+  "findings": [
+    {
+      "specialist": "Latency",
+      "severity": "ok",
+      "summary": "Latency within normal bounds",
+      "details": "P50=12ms, P95=45ms, P99=98ms — all below thresholds"
+    },
+    ...
+  ]
+}
+```
+
+#### Quickstart
+
+**With Docker (recommended):**
+
+```bash
+# 1. Set your Anthropic API key
+echo "ANTHROPIC_API_KEY=sk-ant-..." >> Incident-Response-Agent/.env
+
+# 2. Start the full stack (metrics service + Redis + agent)
+docker compose up --build
+
+# 3. Trigger a full analysis
+curl -X POST http://localhost:8001/analyze | jq
+```
+
+**Without Docker:**
+
+```bash
+cd Incident-Response-Agent
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Copy and edit env file
+cp .env.example .env
+# Set ANTHROPIC_API_KEY and METRICS_API_URL=http://localhost:8000
+
+uvicorn app.main:app --reload --port 8001
+```
+
+#### Running tests
+
+```bash
+cd Incident-Response-Agent
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+pytest -v
+```
+
+> Tests mock both the Anthropic API and the metrics HTTP client — no real API key or running services required.
+
+#### Anomaly thresholds (configurable via env)
+
+| Variable                       | Default | Trigger condition                        |
+| ------------------------------ | ------- | ---------------------------------------- |
+| `LATENCY_P95_THRESHOLD_MS`     | `500`   | WARNING when P95 exceeds this value      |
+| `LATENCY_P99_THRESHOLD_MS`     | `1000`  | CRITICAL when P99 exceeds this value     |
+| `ERROR_RATE_5XX_THRESHOLD_PCT` | `5.0`   | WARNING when 5xx rate exceeds this value |
+| `ERROR_RATE_4XX_THRESHOLD_PCT` | `20.0`  | WARNING when 4xx rate exceeds this value |
+| `MEMORY_USAGE_THRESHOLD_PCT`   | `80.0`  | WARNING when Redis memory exceeds this % |
+
+---
+
 ### `Log-Ingestion-and-Metrics`
 
-FastAPI service that ingests HAProxy logs and exposes aggregated metrics via Redis. Serves as the observability data layer for the Agentic AI pipeline.
+FastAPI service that ingests HAProxy logs and exposes aggregated metrics via Redis. Serves as the observability data layer consumed by the Agentic AI pipeline.
 
 **Stack:** Python · FastAPI · Redis (aioredis) · Pydantic v2
 
