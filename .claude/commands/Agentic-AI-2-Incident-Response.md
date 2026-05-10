@@ -208,4 +208,16 @@ Alerta / Pergunta do Usuário
 
 → O agente produz o `IncidentReport` completo no formato da Seção 5, incluindo linha do tempo, causa raiz confirmada e recomendações para evitar recorrência.
 
+**Exemplo 5 — Diagnóstico de erros 4xx em endpoint crítico:**
+
+> "Taxa de erros 4xx acima de 25%, endpoint `/api/checkout`."
+
+→ O agente identifica o código 4xx dominante (400/401/403/404/429), correlaciona com deploys recentes e propõe rollback (HITL) ou escalonamento (HOTL) conforme o vetor confirmado. Pergunta explicitamente sobre rotação de chaves ou migração de banco antes de autorizar rollback de serviço de autenticação.
+
+**Exemplo 6 — Outage total (RPS = 0):**
+
+> "RPS zerado nos últimos 5 minutos, possível outage."
+
+→ O agente distingue entre serviço down (health check falha) e problema upstream (health check OK). Se a API responde mas o RPS é zero, foca no load balancer e na conectividade de rede. Restart do HAProxy é proposto como HITL por ser ponto de entrada único de todo o tráfego.
+
 ---

@@ -571,11 +571,12 @@ Complete list of all technologies, languages, and libraries used across the proj
 
 Validated scenarios where the Agentic AI Copilot was used to detect, diagnose, and resolve incidents end-to-end. Each scenario follows the **Perception → Reasoning → Action → Learning** cycle and produces a structured post-mortem.
 
-| ID      | Incident                   | Golden Signal    | Root Cause                               | Action                           | MTTD     | Governance |
-| :------ | :------------------------- | :--------------- | :--------------------------------------- | :------------------------------- | :------- | :--------- |
-| INC-001 | P99 = 1.800ms + 5xx spike  | Latency + Errors | Deploy regression                        | Rollback                         | ~1h      | HITL       |
-| INC-002 | Redis memory at 90%        | Saturation       | Unbounded counters + `noeviction` policy | `maxmemory-policy → allkeys-lru` | ~minutes | HITL       |
-| INC-003 | 25% 4xx on `/api/checkout` | Errors           | Auth service deploy broke JWT validation | Rollback                         | ~2h      | HITL       |
+| ID      | Incident                         | Golden Signal    | Root Cause                               | Action                           | MTTD     | Governance |
+| :------ | :------------------------------- | :--------------- | :--------------------------------------- | :------------------------------- | :------- | :--------- |
+| INC-001 | P99 = 1.800ms + 5xx spike        | Latency + Errors | Deploy regression                        | Rollback                         | ~1h      | HITL       |
+| INC-002 | Redis memory at 90%              | Saturation       | Unbounded counters + `noeviction` policy | `maxmemory-policy → allkeys-lru` | ~minutes | HITL       |
+| INC-003 | 25% 4xx on `/api/checkout`       | Errors           | Auth service deploy broke JWT validation | Rollback                         | ~2h      | HITL       |
+| INC-004 | RPS = 0 for 5 min (total outage) | Traffic          | HAProxy process crashed unexpectedly     | HAProxy restart                  | ~5min    | HITL       |
 
 ### INC-001 — P99 CRITICAL + 5xx Spike (Deploy Regression)
 
@@ -597,6 +598,13 @@ Validated scenarios where the Agentic AI Copilot was used to detect, diagnose, a
 **Diagnosis:** Deploy on the auth service introduced a JWT validation regression. Valid tokens were rejected, blocking the checkout critical user journey for ~2 hours before detection.
 **Resolution:** Rollback of the auth service deploy after confirming no key rotation or DB migration was involved. Recovery in ~15 minutes after detection.
 **Post-mortem:** [`docs/post-mortems/2026-05-10-401-checkout-auth-service-regression.md`](docs/post-mortems/2026-05-10-401-checkout-auth-service-regression.md)
+
+### INC-004 — Total Outage (HAProxy Down, RPS = 0)
+
+**Signals:** RPS dropped to zero for 5+ minutes with no active deploy — possible full outage.
+**Diagnosis:** Health check on the ingestion API responded normally, ruling out application crash and pointing to an upstream cause. HAProxy process was confirmed stopped. No deploy or manual intervention had been communicated.
+**Resolution:** HAProxy restarted after collecting crash evidence (logs, dmesg). Traffic restored in under 5 seconds. Root cause of the crash (OOM, external signal, or bug) flagged for follow-up investigation.
+**Post-mortem:** [`docs/post-mortems/2026-05-10-rps-zero-haproxy-down-outage.md`](docs/post-mortems/2026-05-10-rps-zero-haproxy-down-outage.md)
 
 ---
 
