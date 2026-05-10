@@ -14,12 +14,18 @@ FastAPI service that ingests HAProxy logs and exposes aggregated metrics via Red
 
 #### API
 
-| Method | Endpoint              | Description                              |
-| ------ | --------------------- | ---------------------------------------- |
-| `GET`  | `/health`             | Liveness check (API + Redis)             |
-| `POST` | `/logs`               | Ingest a HAProxy log entry (JSON)        |
-| `GET`  | `/metrics/*`          | Read aggregated metrics from Redis       |
-| `GET`  | `/prometheus/metrics` | Prometheus scrape endpoint (OpenMetrics) |
+| Method | Endpoint                  | Description                                              |
+| ------ | ------------------------- | -------------------------------------------------------- |
+| `GET`  | `/health`                 | Liveness check (API + Redis)                             |
+| `POST` | `/logs`                   | Ingest a HAProxy log entry (JSON)                        |
+| `GET`  | `/metrics/overview`       | Total requests, error counts and error rates (4xx/5xx %) |
+| `GET`  | `/metrics/status-codes`   | Request count per HTTP status code                       |
+| `GET`  | `/metrics/backends`       | Request count per HAProxy backend (Traffic)              |
+| `GET`  | `/metrics/frontends`      | Request count per HAProxy frontend (Traffic)             |
+| `GET`  | `/metrics/response-times` | Latency percentiles: P50, P95, P99                       |
+| `GET`  | `/metrics/rps`            | Requests per minute for the last N minutes (Traffic)     |
+| `GET`  | `/metrics/saturation`     | Redis memory, connected/blocked clients, rejected conns  |
+| `GET`  | `/prometheus/metrics`     | Prometheus scrape endpoint (OpenMetrics)                 |
 
 #### Metrics collected
 
