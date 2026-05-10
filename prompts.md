@@ -81,3 +81,7 @@ Registro cronológico de todos os prompts desta sessão de trabalho com Claude C
 75. commit this
 76. Tem como montar um novo diagrama mais visual e didatico para pessoas leigas no tema, mostrando desde a inserção do log na API até o trabalho do agentes?
 77. Agora compile no arquivo prompts.md todos os novos prompts desta sessão.
+78. roda os testes
+79. Todas as ferramentas, tecnologias de programação e bibliotecas estão documentadas? Em caso negativo documente.
+80. commit this
+81. Agora compile no arquivo prompts.md todos os novos prompts desta sessão.
