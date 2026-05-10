@@ -159,15 +159,18 @@ Each specialist runs a **Claude tool-use loop** (`claude-sonnet-4-6`): the model
 **With Docker (recommended):**
 
 ```bash
-# 1. Set your Anthropic API key
-echo "ANTHROPIC_API_KEY=sk-ant-..." >> Incident-Response-Agent/.env
+# 1. Create the .env file with your Anthropic API key
+#    (docker-compose loads it automatically; the file is in .gitignore)
+echo "ANTHROPIC_API_KEY=sk-ant-..." > Incident-Response-Agent/.env
 
-# 2. Start the full stack (metrics service + Redis + agent)
+# 2. Start the full stack (Redis + metrics service + agent)
 docker compose up --build
 
-# 3. Trigger a full analysis
+# 3. Trigger a full multi-agent analysis
 curl -X POST http://localhost:8001/analyze | jq
 ```
+
+> Without a valid `ANTHROPIC_API_KEY` the agent returns `503 Service Unavailable` immediately — no error details are exposed.
 
 **Without Docker:**
 
@@ -178,9 +181,9 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Copy and edit env file
+# Copy and set your API key
 cp .env.example .env
-# Set ANTHROPIC_API_KEY and METRICS_API_URL=http://localhost:8000
+# edit .env: set ANTHROPIC_API_KEY and METRICS_API_URL=http://localhost:8000
 
 uvicorn app.main:app --reload --port 8001
 ```
@@ -198,6 +201,42 @@ pytest -v
 ```
 
 > Tests mock both the Anthropic API and the metrics HTTP client — no real API key or running services required.
+
+#### Security testing
+
+**SAST — Bandit** (static analysis, no running service required):
+
+```bash
+cd Incident-Response-Agent
+
+pip install bandit
+bandit -r app
+```
+
+**DAST — OWASP ZAP** (dynamic analysis, requires Docker and a running stack):
+
+```bash
+# 1. Start the stack
+docker compose up --build -d
+
+# 2. Run ZAP API scan against the agent's OpenAPI spec
+docker run --rm --network host \
+  -v /tmp/zap:/zap/wrk \
+  ghcr.io/zaproxy/zaproxy:stable \
+  zap-api-scan.py \
+  -t http://localhost:8001/openapi.json \
+  -f openapi \
+  -r /zap/wrk/zap-report-agent.html \
+  -J /zap/wrk/zap-report-agent.json \
+  -I
+
+# 3. Stop the stack
+docker compose down
+```
+
+HTML and JSON reports are saved to `/tmp/zap/`.
+
+> Expected result when no API key is configured: `POST /analyze` returns `503` — ZAP flags it as a server-error response (rule 100000) but reports 0 FAILs and no security vulnerabilities.
 
 #### Anomaly thresholds (configurable via env)
 
@@ -325,8 +364,8 @@ docker run --rm --network host \
   zap-api-scan.py \
   -t http://localhost:8000/openapi.json \
   -f openapi \
-  -r /zap/wrk/zap-report.html \
-  -J /zap/wrk/zap-report.json \
+  -r /zap/wrk/zap-report-api.html \
+  -J /zap/wrk/zap-report-api.json \
   -I
 
 # 3. Stop the stack
