@@ -31,6 +31,8 @@ services:
       - "8001:8001"
     env_file:
       - ./Incident-Response-Agent/.env.example
+      - path: ./Incident-Response-Agent/.env
+        required: false
     environment:
       METRICS_API_URL: http://api:8000
     depends_on:
