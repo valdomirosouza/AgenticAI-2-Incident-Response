@@ -77,3 +77,7 @@ Registro cronológico de todos os prompts desta sessão de trabalho com Claude C
 71. A documentacao já foi atualizada?
 72. commit this
 73. Agora compile no arquivo prompts.md todos os novos prompts desta sessão.
+74. O meu Skill e harness estão atualizados?
+75. commit this
+76. Tem como montar um novo diagrama mais visual e didatico para pessoas leigas no tema, mostrando desde a inserção do log na API até o trabalho do agentes?
+77. Agora compile no arquivo prompts.md todos os novos prompts desta sessão.
