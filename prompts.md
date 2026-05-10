@@ -85,3 +85,37 @@ Registro cronológico de todos os prompts desta sessão de trabalho com Claude C
 79. Todas as ferramentas, tecnologias de programação e bibliotecas estão documentadas? Em caso negativo documente.
 80. commit this
 81. Agora compile no arquivo prompts.md todos os novos prompts desta sessão.
+82. Fiz alguns ajustes no meu Skill. Avalie ele e diga se preciso mudar alguma coisa.
+83. Adiciona as seções que faltam
+84. Faz o commit dessas mudanças
+85. Faz o push
+86. Testa o skill com um cenário de incidente
+87. O P99 está em 1.800ms e temos aumento de erros 5xx
+88. Sim, fiz um deploy há 1 hora
+89. Sim, autorizo o rollback
+90. Pods Healthy. Gere o post-mortem
+91. Faz o commit do post-mortem
+92. Faz o push
+93. Testa o skill com outro cenário
+94. Redis com 90% de memória, alertas de saturação disparando
+95. maxmemory-policy é noeviction, RESPONSE_TIME_MAX_ENTRIES está no padrão
+96. Sim, autorizo
+97. Gera o post-mortem
+98. Faz o commit e push
+99. Testa o skill com mais um cenário e use o novo template de postmortem no final
+100. Taxa de erros 4xx acima de 25%, endpoint `/api/checkout`
+101. Código 401, deploy no serviço de autenticação há 2 horas
+102. Não, pode fazer o rollback
+103. já estão healthy
+104. Adiciona os 3 cenários de incidente ao README
+105. Testa o skill com mais um cenário
+106. RPS zerado nos últimos 5 minutos, possível outage
+107. health check responde, não houve deploy
+108. HAProxy está parado
+109. Sim, autoriza
+110. RPS voltou ao normal, gera o post-mortem
+111. Skill, Readme, glossário e documentação estão atualizados?
+112. Adiciona INC-004 ao README
+113. vale adicionar os INC de 001 até 004 ao Skill?
+114. Adiciona os 4 cenários de incidente no CLAUDE.md
+115. Agora compile no arquivo prompts.md todos os novos prompts desta sessão.
