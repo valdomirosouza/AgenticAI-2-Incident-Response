@@ -69,3 +69,11 @@ Registro cronológico de todos os prompts desta sessão de trabalho com Claude C
 63. rode testes SAST e DAST no projeto
 64. commit this
 65. Agora compile e adicione no arquivo prompts.md todos os novos prompts desde a ultima atualizaçao nesta sessão.
+66. roda o docker compose e testa o endpoint `/analyze`
+67. já fiz o login, pode seguir
+68. Onde eu devo ir no site da Anthropic para criar a API KEY?
+69. Arquivo .env criado com a API KEY. Favor incluir no .gitignore para não copiar para o repositorio o arquivo .env
+70. já fiz o login, pode seguir
+71. A documentacao já foi atualizada?
+72. commit this
+73. Agora compile no arquivo prompts.md todos os novos prompts desta sessão.
