@@ -567,6 +567,39 @@ Complete list of all technologies, languages, and libraries used across the proj
 
 ---
 
+## Incident Scenarios — Copilot in Action
+
+Validated scenarios where the Agentic AI Copilot was used to detect, diagnose, and resolve incidents end-to-end. Each scenario follows the **Perception → Reasoning → Action → Learning** cycle and produces a structured post-mortem.
+
+| ID      | Incident                   | Golden Signal    | Root Cause                               | Action                           | MTTD     | Governance |
+| :------ | :------------------------- | :--------------- | :--------------------------------------- | :------------------------------- | :------- | :--------- |
+| INC-001 | P99 = 1.800ms + 5xx spike  | Latency + Errors | Deploy regression                        | Rollback                         | ~1h      | HITL       |
+| INC-002 | Redis memory at 90%        | Saturation       | Unbounded counters + `noeviction` policy | `maxmemory-policy → allkeys-lru` | ~minutes | HITL       |
+| INC-003 | 25% 4xx on `/api/checkout` | Errors           | Auth service deploy broke JWT validation | Rollback                         | ~2h      | HITL       |
+
+### INC-001 — P99 CRITICAL + 5xx Spike (Deploy Regression)
+
+**Signals:** P99 latency at 1,800ms (threshold: 1,000ms) + rising 5xx error rate.
+**Diagnosis:** Deploy introduced a performance regression. HAProxy cascade-timed out backend requests, generating 503/504 errors.
+**Resolution:** Rollback to previous version. Recovery in ~15 minutes after detection.
+**Post-mortem:** [`docs/post-mortems/2026-05-10-p99-5xx-backend-deploy-regression.md`](docs/post-mortems/2026-05-10-p99-5xx-backend-deploy-regression.md)
+
+### INC-002 — Redis Saturation (90% Memory + noeviction)
+
+**Signals:** Redis memory at 90%, saturation alerts firing.
+**Diagnosis:** Metric counters without TTL (`metrics:status:{code}`, `metrics:backend:{name}`, etc.) accumulated indefinitely. The `noeviction` policy meant the next write batch would trigger `OOM command not allowed`, halting all log ingestion.
+**Resolution:** Changed `maxmemory-policy` from `noeviction` to `allkeys-lru`. Structural fix (TTL on counters) flagged as follow-up.
+**Post-mortem:** [`docs/post-mortems/2026-05-10-redis-saturation-noeviction-oom.md`](docs/post-mortems/2026-05-10-redis-saturation-noeviction-oom.md)
+
+### INC-003 — 401 Unauthorized on `/api/checkout` (Auth Service Regression)
+
+**Signals:** 4xx error rate at 25% on `POST /api/checkout` (threshold: 20%), code 401 dominant.
+**Diagnosis:** Deploy on the auth service introduced a JWT validation regression. Valid tokens were rejected, blocking the checkout critical user journey for ~2 hours before detection.
+**Resolution:** Rollback of the auth service deploy after confirming no key rotation or DB migration was involved. Recovery in ~15 minutes after detection.
+**Post-mortem:** [`docs/post-mortems/2026-05-10-401-checkout-auth-service-regression.md`](docs/post-mortems/2026-05-10-401-checkout-auth-service-regression.md)
+
+---
+
 ## Research Context
 
 |                 |                                                                    |
