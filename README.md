@@ -310,7 +310,7 @@ HTML and JSON reports are saved to `/tmp/zap/`.
 
 FastAPI service that ingests HAProxy logs and exposes aggregated metrics via Redis. Serves as the observability data layer consumed by the Agentic AI pipeline.
 
-**Stack:** Python · FastAPI · Redis (aioredis) · Pydantic v2
+**Stack:** Python · FastAPI · redis-py (asyncio) · Pydantic v2 · OpenTelemetry · Prometheus
 
 #### API
 
@@ -492,6 +492,78 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty — console exporter)_ | OTLP gRPC endpoint for trace export      |
 
 Copy `.env.example` to `.env` and adjust as needed.
+
+---
+
+## Tech Stack
+
+Complete list of all technologies, languages, and libraries used across the project.
+
+### Language & Runtime
+
+| Technology         | Version | Purpose                            |
+| ------------------ | ------- | ---------------------------------- |
+| **Python**         | 3.12    | Primary language for both modules  |
+| **Docker**         | 24+     | Container runtime for all services |
+| **Docker Compose** | v2      | Multi-container orchestration      |
+
+### `Log-Ingestion-and-Metrics` — runtime dependencies
+
+| Library                                   | Version | Purpose                                                                   |
+| ----------------------------------------- | ------- | ------------------------------------------------------------------------- |
+| **FastAPI**                               | ≥0.111  | Async web framework, OpenAPI docs generation                              |
+| **Uvicorn**                               | ≥0.29   | ASGI server (`[standard]` extras: uvloop, websockets, watchfiles)         |
+| **redis-py** (`redis[asyncio]`)           | ≥5.0    | Async Redis client (successor to the deprecated `aioredis` package)       |
+| **Pydantic**                              | ≥2.7    | Data validation and serialisation (v2 API)                                |
+| **pydantic-settings**                     | ≥2.2    | Settings management from environment variables / `.env` files             |
+| **python-dotenv**                         | ≥1.0    | `.env` file loader used by pydantic-settings                              |
+| **python-json-logger**                    | ≥2.0.7  | Structured JSON log formatter (stdout)                                    |
+| **prometheus-fastapi-instrumentator**     | ≥6.1    | Auto-instruments FastAPI with Prometheus metrics at `/prometheus/metrics` |
+| **opentelemetry-sdk**                     | ≥1.20   | OpenTelemetry core SDK for distributed tracing                            |
+| **opentelemetry-instrumentation-fastapi** | ≥0.41b0 | Auto-instruments FastAPI routes with OTel spans                           |
+| **opentelemetry-instrumentation-redis**   | ≥0.41b0 | Auto-instruments Redis commands with OTel spans                           |
+
+### `Log-Ingestion-and-Metrics` — development & test dependencies
+
+| Library            | Version | Purpose                                                             |
+| ------------------ | ------- | ------------------------------------------------------------------- |
+| **pytest**         | ≥8.0    | Test runner                                                         |
+| **pytest-asyncio** | ≥0.23   | Async test support (`asyncio_mode = auto`)                          |
+| **httpx**          | ≥0.27   | Async HTTP client used by the test suite via `ASGITransport`        |
+| **fakeredis**      | ≥2.23   | In-memory Redis fake; eliminates the need for a real Redis in tests |
+
+### `Incident-Response-Agent` — runtime dependencies
+
+| Library               | Version | Purpose                                                                      |
+| --------------------- | ------- | ---------------------------------------------------------------------------- |
+| **FastAPI**           | ≥0.111  | Async web framework, OpenAPI docs                                            |
+| **Uvicorn**           | ≥0.29   | ASGI server                                                                  |
+| **anthropic**         | ≥0.28   | Official Anthropic Python SDK — async client, tool-use loop, Claude API      |
+| **httpx**             | ≥0.27   | Async HTTP client for calling the Log-Ingestion-and-Metrics API              |
+| **Pydantic**          | ≥2.7    | `IncidentReport` and `SpecialistFinding` models, request/response validation |
+| **pydantic-settings** | ≥2.2.1  | Settings management (thresholds, model name, API key)                        |
+
+### `Incident-Response-Agent` — development & test dependencies
+
+| Library            | Version | Purpose                                    |
+| ------------------ | ------- | ------------------------------------------ |
+| **pytest**         | ≥8.0    | Test runner                                |
+| **pytest-asyncio** | ≥0.23   | Async test support (`asyncio_mode = auto`) |
+
+### Security tooling
+
+| Tool          | Type | Purpose                                                               |
+| ------------- | ---- | --------------------------------------------------------------------- |
+| **Bandit**    | SAST | Static analysis for Python security issues (run with `bandit -r app`) |
+| **OWASP ZAP** | DAST | Dynamic API scan against live OpenAPI spec (`zap-api-scan.py`)        |
+
+### Infrastructure & Developer tooling
+
+| Tool                  | Purpose                                              |
+| --------------------- | ---------------------------------------------------- |
+| **Redis 7 (Alpine)**  | In-memory data store for all ingested metrics        |
+| **Git + GitHub**      | Version control and remote repository                |
+| **GitHub CLI (`gh`)** | Repository creation and management from the terminal |
 
 ---
 
