@@ -174,3 +174,23 @@ Expected fields on `POST /logs`:
 | `REDIS_URL`                 | `redis://localhost:6379/0` | Redis connection string                      |
 | `RESPONSE_TIME_MAX_ENTRIES` | `100000`                   | Max entries in the response times sorted set |
 | `LOG_LEVEL`                 | `info`                     | Uvicorn log level                            |
+
+---
+
+## Validated Incident Scenarios
+
+Four end-to-end scenarios validated with the Agentic AI Copilot skill, covering all Four Golden Signals. Post-mortems in `docs/post-mortems/`.
+
+| ID      | Signal           | Symptom                           | Root Cause                                 | Resolution                            |
+| ------- | ---------------- | --------------------------------- | ------------------------------------------ | ------------------------------------- |
+| INC-001 | Latency + Errors | P99 = 1.800ms + 5xx spike         | Backend deploy regression                  | Rollback (HITL)                       |
+| INC-002 | Saturation       | Redis memory at 90%               | Counters without TTL + `noeviction` policy | `maxmemory-policy allkeys-lru` (HITL) |
+| INC-003 | Errors           | 25% 4xx on `/api/checkout` (401)  | Auth service deploy broke JWT validation   | Rollback (HITL)                       |
+| INC-004 | Traffic          | RPS = 0 for 5+ min (total outage) | HAProxy process crashed                    | HAProxy restart (HITL)                |
+
+**Key patterns to recognize:**
+
+- P99 spike + 5xx → backend timeout cascade → check for recent deploy first
+- Redis > 80% + `noeviction` → imminent write failure → change eviction policy before touching data
+- 4xx dominant on critical endpoint → check specific code (401 = auth, 404 = routing, 429 = rate limit)
+- RPS = 0 + health check OK → upstream problem (load balancer, DNS, network), not application
