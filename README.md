@@ -4,6 +4,62 @@ Research project exploring **Agentic AI as a Copilot** for reducing **MTTD** (Me
 
 ---
 
+## Como funciona — visão geral para não especialistas
+
+O sistema tem dois momentos distintos: **coleta contínua de dados** e **análise sob demanda com IA**.
+
+```mermaid
+sequenceDiagram
+    autonumber
+
+    actor HA  as 🌐 HAProxy (Load Balancer)
+    participant API as 📡 API de Ingestão<br/>(porta 8000)
+    participant DB  as 🗄️ Redis<br/>(Banco de Métricas)
+    actor ENG as 👩‍💻 Engenheiro On-call
+    participant ORC as 🎯 Orquestrador<br/>(Agente IA)
+    participant CL  as 🧠 Claude<br/>(LLM da Anthropic)
+
+    rect rgb(220, 240, 255)
+        Note over HA,DB: FASE 1 — Coleta contínua de dados (acontece o tempo todo)
+        HA  ->> API: Envia log de cada requisição HTTP recebida
+        API ->> DB:  Atualiza contadores de erros, latência e tráfego
+        Note over DB: Métricas acumuladas em tempo real
+    end
+
+    rect rgb(220, 255, 220)
+        Note over ENG,CL: FASE 2 — Análise com IA (disparada pelo engenheiro)
+        ENG ->> ORC: POST /analyze — "Analise o estado do sistema agora"
+
+        par 4 especialistas trabalham ao mesmo tempo ⚡
+            ORC ->>+ CL: Especialista de Latência consulta P50/P95/P99
+            DB -->> CL: dados de tempo de resposta
+            CL -->>- ORC: "P99 = 1.500ms — CRÍTICO (limite: 1.000ms)"
+        and
+            ORC ->>+ CL: Especialista de Erros consulta taxas 4xx/5xx
+            DB -->> CL: dados de erros HTTP
+            CL -->>- ORC: "Taxa 5xx = 12% — CRÍTICO (limite: 5%)"
+        and
+            ORC ->>+ CL: Especialista de Saturação consulta uso de memória
+            DB -->> CL: dados de memória e conexões Redis
+            CL -->>- ORC: "Memória em 45%, sem conexões rejeitadas — OK"
+        and
+            ORC ->>+ CL: Especialista de Tráfego consulta requisições/minuto
+            DB -->> CL: histórico de RPS dos últimos 10 minutos
+            CL -->>- ORC: "RPS caiu a zero há 6 minutos — CRÍTICO (possível outage)"
+        end
+
+        ORC ->>+ CL: "3 de 4 especialistas reportaram CRÍTICO. Sintetize o diagnóstico."
+        CL -->>- ORC: Título · Diagnóstico · Recomendações priorizadas
+
+        ORC -->> ENG: 📋 Relatório de Incidente completo
+        Note over ENG: Diagnóstico em ~10 segundos<br/>em vez de minutos ou horas
+    end
+```
+
+> **Resumo em uma frase:** o HAProxy alimenta a API com logs continuamente; quando o engenheiro dispara `/analyze`, quatro agentes especialistas consultam as métricas em paralelo, cada um pede ao Claude para interpretar os dados do seu domínio, e o orquestrador sintetiza tudo em um relatório com severidade, diagnóstico e ações recomendadas.
+
+---
+
 ## Architecture
 
 ```mermaid
