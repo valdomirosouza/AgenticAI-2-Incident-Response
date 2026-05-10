@@ -38,3 +38,8 @@ async def rps(
     redis: aioredis.Redis = Depends(get_redis),
 ):
     return await metrics_service.get_rps(redis, minutes)
+
+
+@router.get("/saturation")
+async def saturation(redis: aioredis.Redis = Depends(get_redis)):
+    return await metrics_service.get_saturation(redis)

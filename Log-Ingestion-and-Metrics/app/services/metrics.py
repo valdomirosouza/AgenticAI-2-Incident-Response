@@ -5,15 +5,20 @@ import redis.asyncio as aioredis
 
 
 async def get_overview(redis: aioredis.Redis) -> dict:
-    total, errors_4xx, errors_5xx = await redis.mget(
+    total_raw, errors_4xx_raw, errors_5xx_raw = await redis.mget(
         "metrics:requests:total",
         "metrics:errors:4xx",
         "metrics:errors:5xx",
     )
+    total = int(total_raw or 0)
+    errors_4xx = int(errors_4xx_raw or 0)
+    errors_5xx = int(errors_5xx_raw or 0)
     return {
-        "total_requests": int(total or 0),
-        "errors_4xx": int(errors_4xx or 0),
-        "errors_5xx": int(errors_5xx or 0),
+        "total_requests": total,
+        "errors_4xx": errors_4xx,
+        "errors_5xx": errors_5xx,
+        "error_rate_4xx_pct": round(errors_4xx / total * 100, 2) if total else 0.0,
+        "error_rate_5xx_pct": round(errors_5xx / total * 100, 2) if total else 0.0,
     }
 
 
@@ -69,4 +74,32 @@ async def get_rps(redis: aioredis.Redis, minutes: int = 60) -> dict:
     return {
         k.split(":", 2)[-1]: int(v) if v else 0
         for k, v in zip(keys, values)
+    }
+
+
+async def get_saturation(redis: aioredis.Redis) -> dict:
+    try:
+        info_memory = await redis.info("memory")
+        info_clients = await redis.info("clients")
+        info_stats = await redis.info("stats")
+    except Exception:
+        info_memory = {}
+        info_clients = {}
+        info_stats = {}
+
+    used_memory = int(info_memory.get("used_memory", 0))
+    used_memory_peak = int(info_memory.get("used_memory_peak", 0))
+    maxmemory = int(info_memory.get("maxmemory", 0))
+    memory_usage_pct = round(used_memory / maxmemory * 100, 2) if maxmemory > 0 else None
+
+    return {
+        "redis": {
+            "used_memory_bytes": used_memory,
+            "used_memory_peak_bytes": used_memory_peak,
+            "maxmemory_bytes": maxmemory,
+            "memory_usage_pct": memory_usage_pct,
+            "connected_clients": int(info_clients.get("connected_clients", 0)),
+            "blocked_clients": int(info_clients.get("blocked_clients", 0)),
+            "rejected_connections": int(info_stats.get("rejected_connections", 0)),
+        }
     }
