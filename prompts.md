@@ -119,3 +119,6 @@ Registro cronológico de todos os prompts desta sessão de trabalho com Claude C
 113. vale adicionar os INC de 001 até 004 ao Skill?
 114. Adiciona os 4 cenários de incidente no CLAUDE.md
 115. Agora compile no arquivo prompts.md todos os novos prompts desta sessão.
+116. Rode o TDD, SAST e DAST de todo os projeto.
+117. Faz o commit e push
+118. Agora compile no arquivo prompts.md todos os novos prompts desta sessão.
