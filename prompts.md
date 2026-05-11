@@ -122,3 +122,7 @@ Registro cronológico de todos os prompts desta sessão de trabalho com Claude C
 116. Rode o TDD, SAST e DAST de todo os projeto.
 117. Faz o commit e push
 118. Agora compile no arquivo prompts.md todos os novos prompts desta sessão.
+119. Adicione esta nova visão de arquitetura no Architecture do README.md flowchart LR [...] mas antes de inserir valide e melhore.
+120. commit this
+121. push it
+122. update the session prompts log
