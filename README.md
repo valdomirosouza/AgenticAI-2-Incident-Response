@@ -93,23 +93,24 @@ flowchart LR
         end
 
         CLAUDE["Claude API\nclaude-sonnet-4-6\nTool-use Loop"]
-        REPORT[/"Incident Report\nSeverity · Diagnosis\nRecommendations"/]
+        REPORT[/"📋 IncidentReport"/]
         PM[["Post-mortems\nINC-001 · INC-002\nINC-003 · INC-004"]]
     end
 
-    HA          -->|"① POST /logs"|              LOGS
-    LOGS        -->|"② persiste"|                REDIS
-    REDIS       -->                               MET
-    PROMED      -.->|"③ scrape"|                 PROM
-    PROM        -->                               GRAF & JAEG
+    HA -->|"① POST /logs"| LOGS
+    LOGS -->|"② persiste"| REDIS
+    REDIS --> MET
+    PROMED -.->|"③ scrape"| PROM
+    PROM --> GRAF & JAEG
 
-    ENG         -->|"④ POST /analyze"|           ORCH
-    ORCH        -->|"⑤ spawn parallel"|          LAT & ERR & SAT & TRF
+    ENG -->|"④ POST /analyze"| ORCH
+    ORCH -->|"⑤ spawn parallel"| LAT & ERR & SAT & TRF
     LAT & ERR & SAT & TRF -->|"⑥ GET /metrics/*"| MET
     LAT & ERR & SAT & TRF <-->|"⑦ tool-use loop"| CLAUDE
-    LAT & ERR & SAT & TRF -->|"⑧ findings"|     ORCH
-    ORCH        -->|"⑨ síntese final"|           REPORT
-    REPORT      -->                               ENG & PM
+    LAT & ERR & SAT & TRF -->|"⑧ findings"| ORCH
+    ORCH -->|"⑨ síntese final"| REPORT
+    REPORT --> ENG & PM
+
 ```
 
 ### Internal Architecture
