@@ -62,6 +62,58 @@ sequenceDiagram
 
 ## Architecture
 
+### System Overview
+
+```mermaid
+flowchart LR
+    HA["HAProxy\nLoad Balancer"]
+    ENG(["Engenheiro\nOn-call"])
+
+    subgraph PLATFORM["Backend — AgenticAI · Incident Response"]
+        subgraph INGESTION["Log Ingestion & Metrics · :8000"]
+            LOGS["POST /logs"]
+            MET["GET /metrics/*"]
+            PROMED["GET /prometheus"]
+        end
+
+        REDIS[("Redis :6379\nP50·P95·P99\nRPS · errors")]
+
+        subgraph OBS["Observability"]
+            PROM["Prometheus"]
+            GRAF["Grafana"]
+            JAEG["Jaeger · Loki"]
+        end
+
+        subgraph AGENT["Incident Response Agent · :8001"]
+            ORCH["Orchestrator\nasyncio.gather"]
+            LAT["Latency\nP50/P95/P99"]
+            ERR["Errors\n4xx / 5xx"]
+            SAT["Saturation\nRedis memory"]
+            TRF["Traffic\nRPS drops"]
+        end
+
+        CLAUDE["Claude API\nclaude-sonnet-4-6\nTool-use Loop"]
+        REPORT[/"Incident Report\nSeverity · Diagnosis\nRecommendations"/]
+        PM[["Post-mortems\nINC-001 · INC-002\nINC-003 · INC-004"]]
+    end
+
+    HA          -->|"① POST /logs"|              LOGS
+    LOGS        -->|"② persiste"|                REDIS
+    REDIS       -->                               MET
+    PROMED      -.->|"③ scrape"|                 PROM
+    PROM        -->                               GRAF & JAEG
+
+    ENG         -->|"④ POST /analyze"|           ORCH
+    ORCH        -->|"⑤ spawn parallel"|          LAT & ERR & SAT & TRF
+    LAT & ERR & SAT & TRF -->|"⑥ GET /metrics/*"| MET
+    LAT & ERR & SAT & TRF <-->|"⑦ tool-use loop"| CLAUDE
+    LAT & ERR & SAT & TRF -->|"⑧ findings"|     ORCH
+    ORCH        -->|"⑨ síntese final"|           REPORT
+    REPORT      -->                               ENG & PM
+```
+
+### Internal Architecture
+
 ```mermaid
 flowchart TB
     subgraph sources["Log Sources"]
