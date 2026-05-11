@@ -126,3 +126,7 @@ Registro cronológico de todos os prompts desta sessão de trabalho com Claude C
 120. commit this
 121. push it
 122. update the session prompts log
+123. fix um ajuste no README.md para corrigir o código mermaid do ultimo diagrama de arquitetura adicionado.
+124. commit this
+125. push it
+126. update the session prompts log
