@@ -2,6 +2,8 @@
 
 Research project exploring **Agentic AI as a Copilot** for reducing **MTTD** (Mean Time to Detect) and **MTTR** (Mean Time to Recovery) in IT incident response — developed as part of a Master's dissertation at **PPGCA / Unisinos**.
 
+Three modules working together: a **metrics ingestion API**, a **multi-agent AI copilot** and a **vector knowledge base** that grounds the AI's diagnosis in real historical incidents.
+
 ---
 
 ## Como funciona — visão geral para não especialistas
@@ -48,15 +50,18 @@ sequenceDiagram
             CL -->>- ORC: "RPS caiu a zero há 6 minutos — CRÍTICO (possível outage)"
         end
 
-        ORC ->>+ CL: "3 de 4 especialistas reportaram CRÍTICO. Sintetize o diagnóstico."
+        ORC ->>+ KB: Busca incidentes similares<br/>(symptom_fingerprint · runbook_step · lesson_learned)
+        KB -->>- ORC: Chunks históricos relevantes (INC-001..INC-004)
+
+        ORC ->>+ CL: "3 de 4 especialistas reportaram CRÍTICO. Sintetize o diagnóstico<br/>com base nos findings e no contexto histórico da KB."
         CL -->>- ORC: Título · Diagnóstico · Recomendações priorizadas
 
-        ORC -->> ENG: 📋 Relatório de Incidente completo
+        ORC -->> ENG: 📋 Relatório de Incidente completo + similar_incidents
         Note over ENG: Diagnóstico em ~10 segundos<br/>em vez de minutos ou horas
     end
 ```
 
-> **Resumo em uma frase:** o HAProxy alimenta a API com logs continuamente; quando o engenheiro dispara `/analyze`, quatro agentes especialistas consultam as métricas em paralelo, cada um pede ao Claude para interpretar os dados do seu domínio, e o orquestrador sintetiza tudo em um relatório com severidade, diagnóstico e ações recomendadas.
+> **Resumo em uma frase:** o HAProxy alimenta a API com logs continuamente; quando o engenheiro dispara `/analyze`, quatro agentes especialistas consultam as métricas em paralelo, o orquestrador busca incidentes similares na Knowledge Base e sintetiza tudo via Claude em um relatório com severidade, diagnóstico e ações fundamentadas em casos reais.
 
 ---
 
@@ -93,8 +98,13 @@ flowchart LR
         end
 
         CLAUDE["Claude API\nclaude-sonnet-4-6\nTool-use Loop"]
-        REPORT[/"📋 IncidentReport"/]
+        REPORT[/"📋 IncidentReport\n+ similar_incidents"/]
         PM[["Post-mortems\nINC-001 · INC-002\nINC-003 · INC-004"]]
+
+        subgraph KB_SVC["Knowledge-Base · :8002"]
+            KBAPI["POST /kb/search\nGET /kb/incidents"]
+            QDRANT[("Qdrant :6333\n98 chunks\nINC-001..004")]
+        end
     end
 
     HA -->|"① POST /logs"| LOGS
@@ -108,8 +118,12 @@ flowchart LR
     LAT & ERR & SAT & TRF -->|"⑥ GET /metrics/*"| MET
     LAT & ERR & SAT & TRF <-->|"⑦ tool-use loop"| CLAUDE
     LAT & ERR & SAT & TRF -->|"⑧ findings"| ORCH
-    ORCH -->|"⑨ síntese final"| REPORT
+    ORCH -->|"⑨ busca KB"| KBAPI
+    KBAPI <-->|"query_points"| QDRANT
+    KBAPI -->|"⑩ contexto histórico"| ORCH
+    ORCH -->|"⑪ síntese final"| REPORT
     REPORT --> ENG & PM
+    PM -.->|"seed"| QDRANT
 
 ```
 
@@ -249,7 +263,7 @@ Each specialist runs a **Claude tool-use loop** (`claude-sonnet-4-6`): the model
   "recommendations": [
     "Check api-backend application logs for stack traces",
     "Verify backend health check endpoints",
-    "Consider rolling back the last deployment"
+    "Consider rolling back the last deployment — see INC-001 runbook"
   ],
   "findings": [
     {
@@ -259,9 +273,12 @@ Each specialist runs a **Claude tool-use loop** (`claude-sonnet-4-6`): the model
       "details": "P50=12ms, P95=45ms, P99=98ms — all below thresholds"
     },
     ...
-  ]
+  ],
+  "similar_incidents": ["INC-001", "INC-003"]
 }
 ```
+
+> `similar_incidents` lists the historical incident IDs retrieved from the Knowledge Base whose symptom patterns most closely matched the current findings. Empty when all signals are OK (KB is not queried).
 
 #### Quickstart
 
@@ -356,6 +373,87 @@ HTML and JSON reports are saved to `/tmp/zap/`.
 | `ERROR_RATE_5XX_THRESHOLD_PCT` | `5.0`   | WARNING when 5xx rate exceeds this value |
 | `ERROR_RATE_4XX_THRESHOLD_PCT` | `20.0`  | WARNING when 4xx rate exceeds this value |
 | `MEMORY_USAGE_THRESHOLD_PCT`   | `80.0`  | WARNING when Redis memory exceeds this % |
+
+---
+
+### `Knowledge-Base`
+
+Vector knowledge base that stores historical incident knowledge and enables semantic retrieval. Grounds the AI copilot's diagnosis and recommendations in real past incidents rather than relying solely on LLM priors.
+
+**Stack:** Python · FastAPI · Qdrant · sentence-transformers (all-MiniLM-L6-v2) · httpx
+
+#### How it works
+
+1. Each incident is ingested via `POST /kb/ingest/incident` and automatically **exploded into typed chunks** — symptom patterns, log excerpts, runbook steps, lessons learned, metric snapshots, etc.
+2. Chunks are **embedded** with `all-MiniLM-L6-v2` (384-dim) and stored in **Qdrant**.
+3. At analysis time, the orchestrator builds a query from non-OK specialist findings and calls `POST /kb/search` to retrieve the most relevant historical chunks.
+4. The chunks are injected into the orchestrator's synthesis prompt so Claude can reference proven remediation steps.
+
+The KB operates on **graceful degradation** — if unavailable, the analysis continues without historical context.
+
+#### Chunk types
+
+| Type                  | What it captures                                             |
+| --------------------- | ------------------------------------------------------------ |
+| `symptom_fingerprint` | Canonical signal patterns → root cause mappings              |
+| `runbook_step`        | Ordered playbook steps (HITL / HOTL classified)              |
+| `lesson_learned`      | Actionable learnings extracted from post-mortems             |
+| `log_evidence`        | Representative log excerpts with source and context          |
+| `recovery_command`    | Shell commands used to restore services                      |
+| `metric_snapshot`     | P50/P95/P99, error rates, RPS at detection / peak / recovery |
+| `postmortem`          | Executive summary and full post-mortem narrative             |
+| `error_budget`        | SLO target, duration, and budget consumed                    |
+| `precursor_signal`    | Early warning patterns that preceded the incident            |
+
+#### Seeded incidents
+
+98 chunks across the 4 validated incidents are pre-loaded via `scripts/seed_kb.py`:
+
+| Incident                                 | Chunks | Golden Signal    |
+| ---------------------------------------- | ------ | ---------------- |
+| INC-001 — P99 + 5xx Deploy Regression    | 24     | Latency + Errors |
+| INC-002 — Redis Saturation noeviction    | 23     | Saturation       |
+| INC-003 — 401 Auth Failure /api/checkout | 24     | Errors           |
+| INC-004 — HAProxy Down, RPS = 0          | 27     | Traffic          |
+
+#### API
+
+| Method   | Endpoint              | Description                                                                              |
+| -------- | --------------------- | ---------------------------------------------------------------------------------------- |
+| `GET`    | `/health`             | Service status + Qdrant connectivity                                                     |
+| `POST`   | `/kb/ingest/chunk`    | Store a single typed chunk                                                               |
+| `POST`   | `/kb/ingest/incident` | Auto-explode a full incident into N typed chunks                                         |
+| `POST`   | `/kb/search`          | Semantic search with optional filters (golden_signal, severity, chunk_type, incident_id) |
+| `GET`    | `/kb/incidents`       | List all stored incident IDs                                                             |
+| `GET`    | `/kb/incidents/{id}`  | Retrieve all chunks for an incident                                                      |
+| `DELETE` | `/kb/incidents/{id}`  | Remove all chunks for an incident                                                        |
+
+#### Quickstart
+
+```bash
+# Start full stack (includes Qdrant)
+docker compose up --build
+
+# Seed historical incidents (run once after stack is up)
+cd Knowledge-Base
+USE_DIRECT=1 python3 ../scripts/seed_kb.py
+
+# Search the KB directly
+curl -s -X POST http://localhost:8002/kb/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "P99 alto após deploy rollback", "limit": 3}' | jq
+```
+
+#### Running tests
+
+```bash
+cd Knowledge-Base
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+pytest -v
+```
+
+> Tests inject `FakeEmbeddingService` and `FakeQdrantService` via `app.dependency_overrides` — no Qdrant, no model download required.
 
 ---
 
@@ -554,11 +652,11 @@ Complete list of all technologies, languages, and libraries used across the proj
 
 ### Language & Runtime
 
-| Technology         | Version | Purpose                            |
-| ------------------ | ------- | ---------------------------------- |
-| **Python**         | 3.12    | Primary language for both modules  |
-| **Docker**         | 24+     | Container runtime for all services |
-| **Docker Compose** | v2      | Multi-container orchestration      |
+| Technology         | Version | Purpose                                |
+| ------------------ | ------- | -------------------------------------- |
+| **Python**         | 3.12    | Primary language for all three modules |
+| **Docker**         | 24+     | Container runtime for all services     |
+| **Docker Compose** | v2      | Multi-container orchestration          |
 
 ### `Log-Ingestion-and-Metrics` — runtime dependencies
 
@@ -603,6 +701,26 @@ Complete list of all technologies, languages, and libraries used across the proj
 | **pytest**         | ≥8.0    | Test runner                                |
 | **pytest-asyncio** | ≥0.23   | Async test support (`asyncio_mode = auto`) |
 
+### `Knowledge-Base` — runtime dependencies
+
+| Library                   | Version | Purpose                                                                     |
+| ------------------------- | ------- | --------------------------------------------------------------------------- |
+| **FastAPI**               | ≥0.111  | Async web framework, OpenAPI docs                                           |
+| **Uvicorn**               | ≥0.29   | ASGI server                                                                 |
+| **qdrant-client**         | ≥1.9    | Async Qdrant client — `AsyncQdrantClient`, `query_points` API (v1.13+)      |
+| **sentence-transformers** | ≥3.0    | Embedding model (`all-MiniLM-L6-v2`, 384-dim); runs in thread pool executor |
+| **httpx**                 | ≥0.27   | Async HTTP client (KB client in Incident-Response-Agent also uses this)     |
+| **Pydantic**              | ≥2.7    | `ChunkMetadata`, `IncidentIngestRequest`, `SearchRequest` models            |
+| **pydantic-settings**     | ≥2.2.1  | Settings management (`QDRANT_URL`, `EMBEDDING_MODEL`, etc.)                 |
+
+### `Knowledge-Base` — development & test dependencies
+
+| Library            | Version | Purpose                                                                   |
+| ------------------ | ------- | ------------------------------------------------------------------------- |
+| **pytest**         | ≥8.0    | Test runner                                                               |
+| **pytest-asyncio** | ≥0.23   | Async test support (`asyncio_mode = auto`)                                |
+| **httpx**          | ≥0.27   | `ASGITransport` for in-process test requests (no running server required) |
+
 ### Security tooling
 
 | Tool          | Type | Purpose                                                               |
@@ -612,11 +730,12 @@ Complete list of all technologies, languages, and libraries used across the proj
 
 ### Infrastructure & Developer tooling
 
-| Tool                  | Purpose                                              |
-| --------------------- | ---------------------------------------------------- |
-| **Redis 7 (Alpine)**  | In-memory data store for all ingested metrics        |
-| **Git + GitHub**      | Version control and remote repository                |
-| **GitHub CLI (`gh`)** | Repository creation and management from the terminal |
+| Tool                  | Purpose                                                                 |
+| --------------------- | ----------------------------------------------------------------------- |
+| **Redis 7 (Alpine)**  | In-memory data store for all ingested metrics                           |
+| **Qdrant v1.18**      | Vector database for Knowledge-Base (cosine similarity, payload filters) |
+| **Git + GitHub**      | Version control and remote repository                                   |
+| **GitHub CLI (`gh`)** | Repository creation and management from the terminal                    |
 
 ---
 
