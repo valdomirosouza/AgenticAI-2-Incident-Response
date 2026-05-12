@@ -139,6 +139,7 @@ flowchart TB
 
         subgraph agent["Incident-Response-Agent  ·  FastAPI :8001"]
             direction TB
+            ASEC["SlowAPIMiddleware · auth.py\n10 req/min /analyze · X-API-Key opt-in"]
             ORCH["Orchestrator\nasyncio.gather — runs specialists in parallel"]
             subgraph specialists["Specialist Agents  (Claude claude-sonnet-4-6 + tool use)"]
                 SLA["Latency\nP50 · P95 · P99"]
@@ -155,7 +156,9 @@ flowchart TB
 
             subgraph middleware["Middleware"]
                 RLM["RequestLoggingMiddleware\nX-Request-ID  ·  JSON access log"]
-                SHM["SecurityHeadersMiddleware\nX-Content-Type-Options  ·  CORP"]
+                SHM["SecurityHeadersMiddleware\nHSTS · X-Frame · nosniff · Referrer · Permissions"]
+                RLA["SlowAPIMiddleware\n300 req/min global · 600 req/min POST /logs"]
+                LAUTH["auth.py\nX-API-Key — opt-in (API_KEY env)"]
             end
 
             subgraph routers["Routers"]
@@ -175,6 +178,22 @@ flowchart TB
                 PI["prometheus-fastapi-instrumentator\nLatency · Traffic · Errors · Saturation"]
                 JL["python-json-logger\nStructured JSON stdout"]
             end
+        end
+
+        subgraph kb["Knowledge-Base  ·  FastAPI :8002"]
+            direction TB
+            KBSEC["SlowAPIMiddleware · auth.py\n20 req/min ingest · 60 req/min search · X-API-Key opt-in"]
+            subgraph kbrouters["Routers"]
+                KRI["POST /kb/ingest/chunk\nPOST /kb/ingest/incident"]
+                KRS["POST /kb/search\nGET/DELETE /kb/incidents/*"]
+                KRH["GET /health"]
+            end
+            subgraph kbservices["Services"]
+                KBE["embeddings.py\nall-MiniLM-L6-v2 (384-dim)"]
+                KBQ["qdrant_service.py\nquery_points · upsert · scroll"]
+                KBC["ingestion.py\nincident_to_chunks()"]
+            end
+            QDRANT[("Qdrant  :6333\n─────────────────\ncollection: incidents\n98 chunks · cosine similarity")]
         end
 
         REDIS[("Redis  :6379\n─────────────────\nmetrics:requests:total\nmetrics:status:{code}\nmetrics:errors:4xx / 5xx\nmetrics:response_times  ← P50/P95/P99\nmetrics:rps:{YYYY-MM-DDTHH:MM}\nmetrics:backend:{name}\nmetrics:frontend:{name}")]
@@ -202,6 +221,19 @@ flowchart TB
 
     %% Agent queries metrics service
     specialists -->|"GET /metrics/*"| RM
+
+    %% Agent queries Knowledge Base
+    ORCH -->|"search_kb()"| KRS
+
+    %% Knowledge-Base paths
+    KBSEC -.->|"wraps"| kbrouters
+    KRI --> KBC
+    KBC -->|"embed_batch"| KBE
+    KBC -->|"upsert"| KBQ
+    KRS -->|"embed"| KBE
+    KRS -->|"query_points"| KBQ
+    KBQ <-->|"AsyncQdrantClient"| QDRANT
+    KRH -->|"ensure_collection"| QDRANT
 
     %% Observability outputs
     RP -->|"scrape"| PROM
