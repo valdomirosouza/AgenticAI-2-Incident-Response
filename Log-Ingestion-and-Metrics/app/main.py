@@ -3,10 +3,10 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 
 from app.config import settings
 from app.logging_config import configure_logging
@@ -75,6 +75,12 @@ configure_telemetry(
 )
 
 Instrumentator().instrument(app).expose(app, endpoint="/prometheus/metrics", include_in_schema=True)
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    _access_logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse(status_code=500, content={"error": "An internal error occurred"})
+
 
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
