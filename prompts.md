@@ -145,3 +145,5 @@ Registro cronológico de todos os prompts desta sessão de trabalho com Claude C
 139. Avalie se o código do projeto está seguindo as melhores práticas de desenvolvimento seguro, seguindo o guideline de OWASP e outros frameworks de segurança reconhecidos globalmente.
 140. Faz o commit e push dessas correções
 141. Atualiza o prompts.md com as sessões de hoje
+142. Rode os testes de TDD, SAST e DAST em todo o projeto
+143. Atualiza o prompts.md com as sessões de hoje
