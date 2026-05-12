@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Agentic AI Incident Response system with two modules:
+Agentic AI Incident Response system with three modules:
 
 - **`Log-Ingestion-and-Metrics/`** — FastAPI service that ingests HAProxy logs and exposes aggregated metrics via Redis (port 8000)
 - **`Incident-Response-Agent/`** — Multi-agent AI copilot that queries the metrics service and produces structured `IncidentReport` objects using Claude tool-use (port 8001)
+- **`Knowledge-Base/`** — Vector knowledge base (Qdrant + sentence-transformers) that stores historical incident knowledge and exposes semantic search (port 8002)
 
-Both services run together via `docker compose up --build` from the project root.
+All three services run together via `docker compose up --build` from the project root.
 
 ## Module: Incident-Response-Agent
 
@@ -81,6 +82,109 @@ Incident-Response-Agent/
 | `ERROR_RATE_5XX_THRESHOLD_PCT` | `5.0`                   | 5xx rate WARNING threshold (%)               |
 | `ERROR_RATE_4XX_THRESHOLD_PCT` | `20.0`                  | 4xx rate WARNING threshold (%)               |
 | `MEMORY_USAGE_THRESHOLD_PCT`   | `80.0`                  | Redis memory WARNING threshold (%)           |
+
+---
+
+## Module: Knowledge-Base
+
+### Commands
+
+```bash
+cd Knowledge-Base
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run development server (requires Qdrant running)
+uvicorn app.main:app --reload --port 8002
+
+# Run tests (no Qdrant or embedding model required)
+pytest
+
+# Seed the 4 historical incidents (requires Qdrant on localhost:6333)
+USE_DIRECT=1 python3 ../scripts/seed_kb.py
+
+# Seed via HTTP API (requires KB service running on localhost:8002)
+python3 ../scripts/seed_kb.py
+```
+
+### Architecture
+
+```
+Knowledge-Base/
+  app/
+    main.py               # FastAPI app, SecurityHeadersMiddleware
+    config.py             # Settings (QDRANT_URL, EMBEDDING_MODEL, EMBEDDING_DIM)
+    dependencies.py       # @lru_cache singletons — get_embedding_service, get_qdrant_service
+    models/
+      chunk.py            # ChunkType (12 types), ChunkMetadata, KBChunkRequest/Response,
+                          # IncidentIngestRequest, SearchRequest/Response (all Pydantic)
+    routers/
+      health.py           # GET /health — verifies Qdrant connectivity
+      ingest.py           # POST /kb/ingest/chunk, POST /kb/ingest/incident
+      search.py           # POST /kb/search (semantic + metadata filters)
+      incidents.py        # GET /kb/incidents, GET /kb/incidents/{id}, DELETE /kb/incidents/{id}
+    services/
+      embeddings.py       # EmbeddingService — all-MiniLM-L6-v2 (384-dim), runs in executor
+      qdrant_service.py   # QdrantService — AsyncQdrantClient, query_points API (v1.18+)
+      ingestion.py        # incident_to_chunks — explodes IncidentIngestRequest into typed chunks
+  tests/
+    conftest.py           # FakeEmbeddingService, FakeQdrantService, client fixture
+    test_ingest.py        # Chunk + incident ingest tests (chunk count assertions)
+    test_search.py        # Semantic search + filter + validation tests
+    test_incidents.py     # CRUD, dedup, cascading delete + health endpoint
+  requirements.txt
+  .env.example
+scripts/
+  seed_kb.py             # Seeds INC-001..004 — 98 chunks — supports HTTP and direct mode
+```
+
+### Chunk Types
+
+| Type                   | Content                                                  |
+| ---------------------- | -------------------------------------------------------- |
+| `postmortem`           | Executive summary and full post-mortem narrative         |
+| `symptom_fingerprint`  | Canonical signal patterns → root cause mappings          |
+| `log_evidence`         | Raw log excerpts with source and context                 |
+| `recovery_command`     | Shell commands used to restore services                  |
+| `runbook_step`         | Ordered playbook steps with HITL/HOTL classification     |
+| `lesson_learned`       | Actionable learnings from each incident                  |
+| `metric_snapshot`      | P50/P95/P99/error rates/RPS at detection, peak, recovery |
+| `error_budget`         | SLO target, duration, and budget consumed per incident   |
+| `precursor_signal`     | Early warning patterns that preceded the incident        |
+| `deployment_event`     | Deploy timestamps, versions, services (future use)       |
+| `reasoning_transcript` | Agent diagnostic reasoning (future use)                  |
+| `cuj_impact`           | Critical User Journey affected (future use)              |
+
+### Key Design Decisions
+
+- **No lifespan**: services are initialized lazily via `@lru_cache` in `dependencies.py` and injected with `Depends` — same pattern as `Incident-Response-Agent`. Tests use `app.dependency_overrides` to inject fakes without touching real services.
+- **Batch embedding**: `POST /kb/ingest/incident` embeds all chunks in a single `encode()` call via `embed_batch`, minimizing model overhead.
+- **`query_points` API**: qdrant-client ≥ 1.13 replaced `client.search()` with `client.query_points()`. The service uses the new API; do not revert to `search()`.
+- **Hybrid filters**: `_build_filter` in `qdrant_service.py` maps `SearchRequest` fields to Qdrant `Filter(must=[...])` — multi-value `chunk_types` uses `Filter(should=[...])` (OR logic) nested inside the `must` clause.
+- **Payload serialization**: `metadata.model_dump(mode="json", exclude_none=True)` ensures enum values are stored as plain strings in Qdrant payload, enabling filter comparisons.
+
+### Endpoints
+
+| Method   | Path                  | Description                                                                              |
+| -------- | --------------------- | ---------------------------------------------------------------------------------------- |
+| `GET`    | `/health`             | Service status + Qdrant connectivity                                                     |
+| `POST`   | `/kb/ingest/chunk`    | Store a single typed chunk (201)                                                         |
+| `POST`   | `/kb/ingest/incident` | Auto-explode a full incident into N chunks (201)                                         |
+| `POST`   | `/kb/search`          | Semantic search with optional filters (golden_signal, severity, chunk_type, incident_id) |
+| `GET`    | `/kb/incidents`       | List all incident IDs stored in the KB                                                   |
+| `GET`    | `/kb/incidents/{id}`  | Retrieve all chunks for an incident (404 if missing)                                     |
+| `DELETE` | `/kb/incidents/{id}`  | Remove all chunks for an incident (204 / 404)                                            |
+
+### Environment Variables
+
+| Variable               | Default                 | Description                         |
+| ---------------------- | ----------------------- | ----------------------------------- |
+| `QDRANT_URL`           | `http://localhost:6333` | Qdrant connection URL               |
+| `QDRANT_COLLECTION`    | `incidents`             | Qdrant collection name              |
+| `EMBEDDING_MODEL`      | `all-MiniLM-L6-v2`      | sentence-transformers model name    |
+| `EMBEDDING_DIM`        | `384`                   | Vector dimension (must match model) |
+| `SEARCH_LIMIT_DEFAULT` | `10`                    | Default result count for search     |
 
 ---
 
