@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     anthropic_api_key: str = ""
     metrics_api_url: str = "http://localhost:8000"
+    kb_api_url: str = "http://localhost:8002"
     model: str = "claude-sonnet-4-6"
     max_tokens: int = 2048
 

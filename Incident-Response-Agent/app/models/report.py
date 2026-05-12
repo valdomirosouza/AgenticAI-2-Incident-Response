@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Severity(str, Enum):
@@ -24,3 +24,4 @@ class IncidentReport(BaseModel):
     diagnosis: str
     recommendations: list[str]
     findings: list[SpecialistFinding]
+    similar_incidents: list[str] = Field(default_factory=list)  # incident IDs from KB

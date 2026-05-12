@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import anthropic
 
 import app.config as _cfg
+import app.tools.kb_client as _kb
 from app.agents.specialists.errors import create_errors_agent
 from app.agents.specialists.latency import create_latency_agent
 from app.agents.specialists.saturation import create_saturation_agent
@@ -19,6 +20,10 @@ _SEVERITY_RANK = {Severity.OK: 0, Severity.WARNING: 1, Severity.CRITICAL: 2}
 _SYSTEM_PROMPT = """You are an Incident Response Orchestrator for an SRE team. \
 You receive structured findings from four specialist agents (Latency, Errors, Saturation, Traffic) \
 and synthesize them into a final incident report.
+
+You may also receive historical context from similar past incidents stored in the Knowledge Base. \
+Use it to improve the specificity of your diagnosis and to ground your recommendations \
+in proven remediation steps from real incidents.
 
 Your task:
 1. Determine the overall severity (ok / warning / critical) — use the highest severity across all findings.
@@ -47,12 +52,19 @@ async def run_analysis() -> IncidentReport:
     findings: tuple[SpecialistFinding, ...] = await asyncio.gather(
         *[agent.analyze() for agent in agents]
     )
-    logger.info("All specialists completed — synthesizing findings")
+    logger.info("All specialists completed — querying KB for similar incidents")
 
-    return await _synthesize(list(findings))
+    kb_results: list[dict] = []
+    non_ok = [f for f in findings if f.severity != Severity.OK]
+    if non_ok:
+        kb_query = " | ".join(f"{f.specialist}: {f.summary}" for f in non_ok)
+        kb_results = await _kb.search_kb(kb_query)
+        logger.info("KB returned %d relevant chunks", len(kb_results))
+
+    return await _synthesize(list(findings), kb_results)
 
 
-async def _synthesize(findings: list[SpecialistFinding]) -> IncidentReport:
+async def _synthesize(findings: list[SpecialistFinding], kb_results: list[dict]) -> IncidentReport:
     findings_text = "\n\n".join(
         f"**{f.specialist} Specialist** (severity: {f.severity.value})\n"
         f"Summary: {f.summary}\n"
@@ -60,20 +72,34 @@ async def _synthesize(findings: list[SpecialistFinding]) -> IncidentReport:
         for f in findings
     )
 
+    user_content = f"Here are the findings from the specialist agents:\n\n{findings_text}\n\n"
+
+    similar_incidents: list[str] = []
+    if kb_results:
+        kb_lines: list[str] = []
+        for r in kb_results:
+            meta = r.get("metadata", {})
+            inc_id = meta.get("incident_id", "?")
+            chunk_type = meta.get("chunk_type", "?")
+            content = r.get("content", "")
+            if inc_id not in similar_incidents:
+                similar_incidents.append(inc_id)
+            kb_lines.append(f"[{inc_id} / {chunk_type}] {content}")
+        user_content += (
+            f"Historical context from the Knowledge Base "
+            f"({len(kb_results)} chunks from: {', '.join(similar_incidents)}):\n\n"
+            + "\n\n".join(kb_lines)
+            + "\n\n"
+        )
+
+    user_content += "Provide the final incident assessment."
+
     client = anthropic.AsyncAnthropic(api_key=_cfg.settings.anthropic_api_key)
     response = await client.messages.create(
         model=_cfg.settings.model,
         max_tokens=_cfg.settings.max_tokens,
         system=_SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"Here are the findings from the specialist agents:\n\n{findings_text}\n\n"
-                    "Provide the final incident assessment."
-                ),
-            }
-        ],
+        messages=[{"role": "user", "content": user_content}],
     )
 
     text = next((b.text for b in response.content if hasattr(b, "text")), "")
@@ -92,6 +118,7 @@ async def _synthesize(findings: list[SpecialistFinding]) -> IncidentReport:
             diagnosis=data.get("diagnosis", ""),
             recommendations=data.get("recommendations", []),
             findings=findings,
+            similar_incidents=similar_incidents,
         )
     except Exception:
         logger.warning("Could not parse orchestrator JSON response; deriving severity from findings")
@@ -103,4 +130,5 @@ async def _synthesize(findings: list[SpecialistFinding]) -> IncidentReport:
             diagnosis=text,
             recommendations=[],
             findings=findings,
+            similar_incidents=similar_incidents,
         )
