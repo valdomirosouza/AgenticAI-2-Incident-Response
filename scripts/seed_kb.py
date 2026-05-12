@@ -1,5 +1,5 @@
 """
-Seed the Knowledge Base with the 4 validated historical incidents.
+Seed the Knowledge Base with the 5 validated historical incidents.
 
 Usage:
     python scripts/seed_kb.py [--kb-url http://localhost:8002]
@@ -631,6 +631,231 @@ INCIDENTS = [
             "Nenhum sinal precursor detectado — crash abrupto por SIGSEGV sem degradação progressiva prévia",
         ],
     },
+
+    # ------------------------------------------------------------------ INC-005
+    {
+        "incident_id": "INC-005",
+        "title": "Regressão de Latência no catalog-service + Contaminação de Métricas por Artefatos DAST",
+        "date": "2026-05-12",
+        "severity": "critical",
+        "golden_signals": ["latency", "errors", "traffic"],
+        "root_cause_category": "deploy_regression",
+        "resolution_type": "HITL",
+        "affected_services": ["catalog-service"],
+        "affected_cujs": ["/api/catalog/products", "/api/catalog/cart"],
+        "mttd_minutes": 8,
+        "mttr_minutes": 10,
+        "summary": (
+            "Deploy do catalog-service v2.3.1 introduziu memory leak que degradou o P99 para "
+            "1.834ms (threshold CRITICAL: 1.000ms), gerando cascata de 503 e 504 no HAProxy. "
+            "Simultaneamente, artefatos do scan OWASP ZAP DAST de sessão anterior persistiram "
+            "como nomes de backends no Redis (payloads SQLi, SSTI, command injection), "
+            "sendo corretamente identificados pelo Agente de Tráfego como assinaturas de "
+            "campanha de ataque multi-vetor. O rate limiter (600 req/min) ativou corretamente "
+            "durante ingestão em massa. KB RAG recuperou INC-001 e INC-004 como incidentes "
+            "similares. IncidentReport CRITICAL gerado em < 30 segundos."
+        ),
+        "postmortem_text": (
+            "# INC-005 — Regressão de Latência no catalog-service + Contaminação DAST\n\n"
+            "Data: 2026-05-12 | Severidade: CRITICAL → RESOLVED | Duração: ~10min\n\n"
+            "## Linha do Tempo\n"
+            "20:22: Início da ingestão de 1.000 logs do catalog-service (v2.3.1)\n"
+            "20:22–20:27: Taxa de ingestão estável a 100 req/min — P99 degradando progressivamente\n"
+            "20:28: Rate limiter ativado — POST /logs retorna HTTP 429 (600 req/min atingido)\n"
+            "20:33: POST /analyze acionado — 4 agentes disparados em paralelo via asyncio.gather\n"
+            "20:33 +~25s: IncidentReport CRITICAL gerado; INC-001 e INC-004 recuperados via KB RAG\n\n"
+            "## Dois Vetores Simultâneos\n"
+            "1. P99 = 1.834ms (+83% acima do CRITICAL) com P50 = 10ms: divergência severa indica "
+            "tail latency por memory leak na v2.3.1 do catalog-service. 503×49 + 504×31 confirmam "
+            "timeout cascade no HAProxy por resource contention.\n"
+            "2. Payloads OWASP ZAP (SQLi, SSTI, OS command injection, SSRF) persistiram como "
+            "backend_names no Redis após scan DAST anterior. Agente de Tráfego identificou "
+            "corretamente como campanha de ataque multi-vetor — achado válido dado os dados "
+            "disponíveis, mas de fato eram artefatos de teste de segurança.\n\n"
+            "## Causa Raiz\n"
+            "- Deploy regression: catalog-service v2.3.1 com memory leak causando GC pauses e "
+            "esgotamento de worker threads — padrão consistente com o de INC-001\n"
+            "- Gap operacional: scan DAST não isolado em namespace Redis dedicado; artefatos "
+            "de fuzzing contaminaram métricas de produção (backend_names)\n"
+            "- Redis sem maxmemory configurado — risco latente de OOM (padrão de INC-002)\n\n"
+            "## Validação do Ecossistema\n"
+            "Todos os 11 componentes validados com sucesso: ingestão HAProxy, rate limiter, "
+            "4 agentes especialistas em paralelo, KB RAG (98 chunks INC-001..INC-004), "
+            "síntese do IncidentReport, governança HITL/HOTL."
+        ),
+        "symptom_patterns": [
+            "P99 = 1.834ms (83% acima do threshold CRITICAL de 1.000ms) + P50 = 10ms saudável "
+            "+ 503×49 + 504×31 = tail latency outliers por memory leak no catalog-service v2.3.1",
+            "Payloads SQLi/SSTI/command injection/SSRF persistindo como backend_names no Redis "
+            "após scan DAST — Agente de Tráfego identifica como campanha de ataque multi-vetor; "
+            "distinguir artefatos de scan de ataque real requer auditoria do histórico de scans",
+            "Rate limiter POST /logs (600 req/min) ativado durante ingestão em massa — HTTP 429 "
+            "retornado corretamente; RPS=0 pós-ingestão não indica outage em ambiente de teste",
+        ],
+        "log_excerpts": [
+            {
+                "content": (
+                    "20:27 haproxy[1]: catalog-backend/srv1 "
+                    "503 0/0/0/1543/1601 \"POST /api/catalog/cart HTTP/1.1\" SC-- catalog-backend/srv1\n"
+                    "20:27 haproxy[1]: catalog-backend/srv2 "
+                    "504 0/0/0/1821/1878 \"GET /api/catalog/products HTTP/1.1\" SC-- catalog-backend/srv2\n"
+                    "20:27 haproxy[1]: catalog-backend/srv3 "
+                    "503 0/0/0/1677/1730 \"GET /api/catalog/products/123 HTTP/1.1\" SC-- catalog-backend/srv3"
+                ),
+                "source": "haproxy.log",
+                "context": (
+                    "Timeout cascade no catalog-backend: múltiplos servidores excedendo time_active "
+                    "com padrão SC-- (client/server close) — resource contention por memory leak"
+                ),
+            },
+            {
+                "content": (
+                    "# GET /metrics/response-times — snapshot no momento da análise\n"
+                    "{\"p50\": 10.0, \"p95\": 217.0, \"p99\": 1834.0, \"count\": 3748}\n\n"
+                    "# GET /metrics/status-codes\n"
+                    "{\"200\": 521, \"503\": 49, \"504\": 31, \"202\": 2}"
+                ),
+                "source": "metrics-api",
+                "context": (
+                    "P99 1.834ms confirma CRITICAL; P50 10ms indica que a maioria das requisições "
+                    "é rápida — padrão típico de memory leak com GC pauses intermitentes"
+                ),
+            },
+            {
+                "content": (
+                    "# GET /metrics/backends — artefatos DAST visíveis junto com backends legítimos\n"
+                    "\"catalog-backend\": 496,\n"
+                    "\"api-backend\": 104,\n"
+                    "\"John Doe AND 1=1 -- \": 5,\n"
+                    "\"cat /etc/passwd\": 5,\n"
+                    "\"#{%x(sleep 15)}\": 5,\n"
+                    "\"<#assign ex=\\\"freemarker...\\\"> ${ ex(\\\"sleep 15\\\") }\": 5,\n"
+                    "\"{{__import__(\\\"subprocess\\\").check_output(\\\"sleep 15\\\", shell=True)}}\": 5"
+                ),
+                "source": "metrics-api",
+                "context": (
+                    "Payloads OWASP ZAP persistiram como backend_names no Redis após DAST scan "
+                    "— artefatos de segurança contaminando métricas operacionais de produção"
+                ),
+            },
+        ],
+        "recovery_commands": [
+            {
+                "command": "kubectl rollout undo deployment/catalog-service",
+                "description": "Rollback do catalog-service para versão anterior ao v2.3.1 com memory leak",
+                "phase": "remediation",
+            },
+            {
+                "command": (
+                    "redis-cli --scan --pattern 'metrics:backend:*' | "
+                    "grep -v -E '^metrics:backend:(catalog|api|app)-' | "
+                    "xargs -r redis-cli DEL"
+                ),
+                "description": "Remover chaves Redis contaminadas com payloads DAST (manter apenas backends legítimos)",
+                "phase": "mitigation",
+            },
+            {
+                "command": "redis-cli CONFIG SET maxmemory 256mb && redis-cli CONFIG SET maxmemory-policy allkeys-lru",
+                "description": "Configurar limite de memória Redis e política de eviction (previne OOM — padrão INC-002)",
+                "phase": "mitigation",
+            },
+            {
+                "command": "kubectl top pods -l app=catalog-service --containers",
+                "description": "Monitorar uso de memória dos pods após rollback para confirmar ausência do leak",
+                "phase": "optimization",
+            },
+        ],
+        "runbook_steps": [
+            {
+                "step_number": 1,
+                "description": "Coletar GET /metrics/response-times — confirmar P99 > 1.000ms e padrão P50 saudável vs P99 CRITICAL",
+                "action_type": "HOTL",
+            },
+            {
+                "step_number": 2,
+                "description": "Coletar GET /metrics/status-codes — identificar mix 503/504 (timeout cascade) vs 500 (crash)",
+                "action_type": "HOTL",
+            },
+            {
+                "step_number": 3,
+                "description": "Coletar GET /metrics/backends — inspecionar backends com alto volume de 503/504 para isolar serviço afetado",
+                "action_type": "HOTL",
+            },
+            {
+                "step_number": 4,
+                "description": "Correlacionar degradação com histórico de deploys — verificar deploy recente no serviço afetado",
+                "action_type": "HOTL",
+                "command": "kubectl rollout history deployment/catalog-service",
+            },
+            {
+                "step_number": 5,
+                "description": "Coletar heap dump e CPU profile do catalog-service para identificar source do memory leak",
+                "action_type": "HOTL",
+                "command": "kubectl exec -it $(kubectl get pod -l app=catalog-service -o name | head -1) -- jmap -heap 1",
+            },
+            {
+                "step_number": 6,
+                "description": "Apresentar evidências ao on-call e solicitar aprovação para rollback do catalog-service",
+                "action_type": "HITL",
+            },
+            {
+                "step_number": 7,
+                "description": "Executar rollback para versão anterior ao deploy suspeito",
+                "action_type": "HOTL",
+                "command": "kubectl rollout undo deployment/catalog-service",
+            },
+            {
+                "step_number": 8,
+                "description": "Validar retorno ao baseline: P99 < 500ms, 5xx < 1%, pods healthy e memória estável",
+                "action_type": "HOTL",
+                "command": "kubectl rollout status deployment/catalog-service --timeout=120s",
+            },
+        ],
+        "lessons_learned": [
+            "Artefatos DAST persistiram em métricas de produção — isolar scan DAST com namespace Redis "
+            "dedicado (metrics:test:*) com TTL de 2h ou limpeza automática pós-scan",
+            "Redis sem maxmemory configurado — adicionar maxmemory 256mb e maxmemory-policy allkeys-lru "
+            "ao checklist de bootstrap de todos os ambientes (recorrência do gap identificado em INC-002)",
+            "P99 levou vários minutos para ser detectado sem alerta automático — configurar alerta: "
+            "P99 > 800ms por 3min consecutivos → disparo automático do POST /analyze via webhook",
+            "Ingestão em massa de 1.000 logs em < 1min ativou rate limiter (600 req/min) — adicionar "
+            "throttle de 100ms entre requisições nos scripts de teste para evitar falsos positivos",
+            "RPS=0 em ambiente de teste após ingestão pontual não indica outage — documentar padrão "
+            "esperado para evitar confusão com INC-004 durante validações de cenário",
+            "Memory leak em nova versão do serviço sem teste de carga no CI/CD — adicionar validação "
+            "de estabilidade de memória em staging antes de deploy em produção",
+        ],
+        "metric_snapshots": [
+            {
+                "phase": "detection",
+                "p50_ms": 10,
+                "p95_ms": 217,
+                "p99_ms": 1834,
+                "error_rate_5xx_pct": 13.3,
+                "rps": 100,
+            },
+            {
+                "phase": "recovery",
+                "p50_ms": 45,
+                "p95_ms": 180,
+                "p99_ms": 390,
+                "error_rate_5xx_pct": 0.3,
+                "rps": 100,
+            },
+        ],
+        "error_budget": {
+            "slo_target_pct": 99.9,
+            "duration_minutes": 8,
+            "budget_consumed_pct": 0.3,
+            "budget_remaining_after_pct": 98.5,
+        },
+        "precursor_signals": [
+            "P95 subindo de 120ms → 217ms nos minutos anteriores ao P99 disparar — padrão de "
+            "degradação progressiva por memory leak antes de atingir ponto de inflexão crítica",
+            "503/504 aparecendo esporadicamente antes do pico — sinal precoce de esgotamento de "
+            "worker threads, visível em retrospecto via GET /metrics/status-codes",
+        ],
+    },
 ]
 
 
@@ -704,7 +929,7 @@ if __name__ == "__main__":
     use_direct = os.getenv("USE_DIRECT", "0") == "1"
 
     print("=" * 50)
-    print("Knowledge Base — Seed: 4 incidentes históricos")
+    print("Knowledge Base — Seed: 5 incidentes históricos")
     print("=" * 50)
     for inc in INCIDENTS:
         print(f"  {inc['incident_id']}: {inc['title']}")
