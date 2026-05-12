@@ -362,7 +362,7 @@ docker compose down
 
 HTML and JSON reports are saved to `/tmp/zap/`.
 
-> Expected result when no API key is configured: `POST /analyze` returns `503` — ZAP flags it as a server-error response (rule 100000) but reports 0 FAILs and no security vulnerabilities.
+> Expected result: `FAIL-NEW: 0 WARN-NEW: 0 PASS: 119` — all 119 security rules pass.
 
 #### Anomaly thresholds (configurable via env)
 
@@ -454,6 +454,27 @@ pytest -v
 ```
 
 > Tests inject `FakeEmbeddingService` and `FakeQdrantService` via `app.dependency_overrides` — no Qdrant, no model download required.
+
+#### Security testing
+
+**SAST — Bandit:**
+
+```bash
+cd Knowledge-Base && pip install bandit && bandit -r app
+```
+
+**DAST — OWASP ZAP:**
+
+```bash
+docker compose up --build -d
+docker run --rm --network host -v /tmp/zap:/zap/wrk \
+  ghcr.io/zaproxy/zaproxy:stable zap-api-scan.py \
+  -t http://localhost:8002/openapi.json -f openapi \
+  -r /zap/wrk/zap-report-kb.html -I
+docker compose down
+```
+
+> Expected result: `FAIL-NEW: 0 WARN-NEW: 0 PASS: 119`
 
 ---
 
@@ -581,6 +602,8 @@ docker compose down
 
 HTML and JSON reports are saved to `/tmp/zap/`.
 
+> Expected result: `FAIL-NEW: 0 WARN-NEW: 0 PASS: 119`
+
 #### Observability
 
 The service implements the three observability pillars out of the box.
@@ -646,6 +669,77 @@ Copy `.env.example` to `.env` and adjust as needed.
 
 ---
 
+## Security
+
+All three services share a common security layer validated with Bandit (SAST, 0 issues) and OWASP ZAP (DAST, 0 FAIL / 0 WARN across all services).
+
+### Authentication — X-API-Key (opt-in)
+
+Every service exposes a `require_api_key` dependency that validates the `X-API-Key` request header. Auth is **disabled by default** (when `API_KEY=""`) so development and tests work with no extra configuration.
+
+To enable, set in `.env`:
+
+```bash
+API_KEY=<openssl rand -hex 32>
+```
+
+Protected endpoints: `POST /logs` · `POST /analyze` · `POST /kb/ingest/chunk` · `POST /kb/ingest/incident`
+
+### Rate limiting — slowapi
+
+Each service has a `SlowAPIMiddleware` global rate limit plus stricter per-endpoint limits on expensive operations:
+
+| Endpoint                                    | Limit       | Reason                           |
+| ------------------------------------------- | ----------- | -------------------------------- |
+| `POST /analyze`                             | 10 req/min  | Triggers 5 Claude API calls each |
+| `POST /kb/ingest/incident`                  | 20 req/min  | Batch embedding inference        |
+| `POST /kb/ingest/chunk` · `POST /kb/search` | 60 req/min  | Embedding + Qdrant I/O           |
+| `POST /logs`                                | 600 req/min | HAProxy high-volume ingest       |
+
+### HTTP security headers
+
+All responses include: `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Strict-Transport-Security`, `Referrer-Policy: no-referrer`, `Permissions-Policy`.
+
+### Infrastructure authentication (production)
+
+| Component | How to enable           | Variable                                                     |
+| --------- | ----------------------- | ------------------------------------------------------------ |
+| Redis     | `--requirepass` via env | `REDIS_PASSWORD` in root `.env`                              |
+| Qdrant    | API key service config  | `QDRANT__SERVICE__API_KEY` + `QDRANT_API_KEY` in root `.env` |
+
+> Both are **disabled by default** — empty value = no auth. Provide non-empty values in `.env` to activate.
+
+### Disable API docs in production
+
+Each service exposes `/docs`, `/redoc`, and `/openapi.json` by default. Set `ENABLE_DOCS=false` in the service's `.env` to hide them.
+
+### SAST/DAST results
+
+Run all three at once:
+
+```bash
+# TDD
+for dir in Log-Ingestion-and-Metrics Incident-Response-Agent Knowledge-Base; do
+  cd $dir && pytest -q && cd ..
+done
+
+# SAST
+for dir in Log-Ingestion-and-Metrics Incident-Response-Agent Knowledge-Base; do
+  bandit -r $dir/app -q
+done
+
+# DAST (requires running stack)
+docker compose up --build -d
+for port in 8000 8001 8002; do
+  docker run --rm --network host -v /tmp/zap:/zap/wrk \
+    ghcr.io/zaproxy/zaproxy:stable zap-api-scan.py \
+    -t http://localhost:$port/openapi.json -f openapi -I
+done
+docker compose down
+```
+
+---
+
 ## Tech Stack
 
 Complete list of all technologies, languages, and libraries used across the project.
@@ -673,6 +767,7 @@ Complete list of all technologies, languages, and libraries used across the proj
 | **opentelemetry-sdk**                     | ≥1.20   | OpenTelemetry core SDK for distributed tracing                            |
 | **opentelemetry-instrumentation-fastapi** | ≥0.41b0 | Auto-instruments FastAPI routes with OTel spans                           |
 | **opentelemetry-instrumentation-redis**   | ≥0.41b0 | Auto-instruments Redis commands with OTel spans                           |
+| **slowapi**                               | ≥0.1.9  | Rate limiting middleware (600 req/min on `POST /logs`)                    |
 
 ### `Log-Ingestion-and-Metrics` — development & test dependencies
 
@@ -691,6 +786,7 @@ Complete list of all technologies, languages, and libraries used across the proj
 | **Uvicorn**           | ≥0.29   | ASGI server                                                                  |
 | **anthropic**         | ≥0.28   | Official Anthropic Python SDK — async client, tool-use loop, Claude API      |
 | **httpx**             | ≥0.27   | Async HTTP client for calling the Log-Ingestion-and-Metrics API              |
+| **slowapi**           | ≥0.1.9  | Rate limiting middleware (10 req/min on `/analyze`)                          |
 | **Pydantic**          | ≥2.7    | `IncidentReport` and `SpecialistFinding` models, request/response validation |
 | **pydantic-settings** | ≥2.2.1  | Settings management (thresholds, model name, API key)                        |
 
@@ -710,6 +806,7 @@ Complete list of all technologies, languages, and libraries used across the proj
 | **qdrant-client**         | ≥1.9    | Async Qdrant client — `AsyncQdrantClient`, `query_points` API (v1.13+)      |
 | **sentence-transformers** | ≥3.0    | Embedding model (`all-MiniLM-L6-v2`, 384-dim); runs in thread pool executor |
 | **httpx**                 | ≥0.27   | Async HTTP client (KB client in Incident-Response-Agent also uses this)     |
+| **slowapi**               | ≥0.1.9  | Rate limiting middleware (20 req/min on `/kb/ingest/incident`)              |
 | **Pydantic**              | ≥2.7    | `ChunkMetadata`, `IncidentIngestRequest`, `SearchRequest` models            |
 | **pydantic-settings**     | ≥2.2.1  | Settings management (`QDRANT_URL`, `EMBEDDING_MODEL`, etc.)                 |
 
