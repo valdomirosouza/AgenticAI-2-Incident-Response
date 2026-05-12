@@ -38,9 +38,10 @@ pytest tests/test_specialists.py -v
 Incident-Response-Agent/
   app/
     main.py                    # FastAPI app, SecurityHeadersMiddleware, POST /analyze
-    config.py                  # Settings (ANTHROPIC_API_KEY, thresholds, model)
+    config.py                  # Settings (ANTHROPIC_API_KEY, thresholds, model, kb_api_url)
     agents/
-      orchestrator.py          # Runs 4 specialists via asyncio.gather, calls Claude to synthesize
+      orchestrator.py          # Runs 4 specialists via asyncio.gather; queries KB for similar
+                               # incidents; calls Claude to synthesize findings + KB context
       specialists/
         base.py                # SpecialistAgent: tool-use loop until stop_reason != "tool_use"
         latency.py             # Latency specialist — GET /metrics/response-times
@@ -49,15 +50,30 @@ Incident-Response-Agent/
         traffic.py             # Traffic specialist  — GET /metrics/rps + /backends
     tools/
       metrics_client.py        # httpx async client wrapping all Log-Ingestion-and-Metrics endpoints
+      kb_client.py             # httpx async client for Knowledge-Base /kb/search (5s timeout,
+                               # returns [] on any error — zero-impact graceful degradation)
     models/
-      report.py                # SpecialistFinding, IncidentReport (Pydantic), Severity enum
+      report.py                # SpecialistFinding, IncidentReport (Pydantic), Severity enum;
+                               # IncidentReport.similar_incidents: list[str] lists KB incident IDs
   tests/
     conftest.py                # FakeTextBlock, FakeToolUseBlock, FakeResponse helpers + client fixture
     test_specialists.py        # Per-specialist unit tests with mocked Anthropic + metrics client
-    test_orchestrator.py       # Orchestrator integration tests + /analyze endpoint test
+    test_orchestrator.py       # Orchestrator integration tests + /analyze endpoint test + KB tests
     test_metrics_client.py     # HTTP client unit tests with mocked httpx
+    test_kb_client.py          # KB client unit tests: results, HTTP errors, timeout, limit
   requirements.txt
   .env.example                 # ANTHROPIC_API_KEY= (empty — .env is loaded by docker-compose)
+```
+
+### Analysis Flow (with KB integration)
+
+```
+POST /analyze
+  └── run_analysis()
+        ├── asyncio.gather(latency, errors, saturation, traffic)  ← parallel specialists
+        ├── [non-OK findings?] → kb_client.search_kb(query)       ← skipped when all OK
+        └── _synthesize(findings, kb_results)                     ← Claude synthesis
+              └── IncidentReport { ..., similar_incidents: [...] }
 ```
 
 ### Key Design Decisions
@@ -65,9 +81,12 @@ Incident-Response-Agent/
 - **Multi-agent pattern**: each specialist is an independent Claude API call with its own system prompt and tools; the orchestrator makes a fifth call to synthesize all four findings.
 - **Tool-use loop** (`base.py`): sends messages to Claude, executes any `tool_use` blocks by calling the metrics HTTP API, appends results, and loops until `stop_reason == "end_turn"`.
 - **Parallel execution**: `asyncio.gather(*[agent.analyze() for agent in agents])` runs all specialists concurrently, bounded only by Claude API latency.
+- **KB enrichment** (`orchestrator.py`): after specialists complete, non-OK findings are joined into a natural-language query and sent to the KB. Matching chunks (`symptom_fingerprint`, `runbook_step`, `lesson_learned`) are injected into the synthesis prompt so Claude can ground recommendations in proven remediation steps. KB is **skipped entirely when all findings are OK** — zero overhead on healthy runs.
+- **KB graceful degradation** (`kb_client.py`): `search_kb()` catches all exceptions and returns `[]`, so a missing or slow KB service has zero impact on analysis. The 5s timeout prevents the KB from adding latency to the critical path.
 - **Graceful degradation**: JSON parse failures in specialist or orchestrator responses fall back to a safe `SpecialistFinding` / `IncidentReport` with WARNING severity and raw text details.
 - **Security**: returns `503` with empty body when `ANTHROPIC_API_KEY` is not configured; `SecurityHeadersMiddleware` adds `X-Content-Type-Options` and `Cross-Origin-Resource-Policy` to all responses.
 - **Testability**: tool handlers reference `_mc.function` (module-level lookup) so `patch("app.tools.metrics_client.X")` correctly intercepts calls inside lambdas at test time.
+- **Patch target convention**: orchestrator imports specialists via `from app.agents.specialists.X import create_X_agent`. Tests must patch `app.agents.orchestrator.create_X_agent` (the consumer module), not `app.agents.specialists.X.create_X_agent` (the source module) — patching the source has no effect on an already-imported name.
 
 ### Environment Variables
 
@@ -75,6 +94,7 @@ Incident-Response-Agent/
 | ------------------------------ | ----------------------- | -------------------------------------------- |
 | `ANTHROPIC_API_KEY`            | _(empty)_               | Anthropic API key — required for /analyze    |
 | `METRICS_API_URL`              | `http://localhost:8000` | URL of the Log-Ingestion-and-Metrics service |
+| `KB_API_URL`                   | `http://localhost:8002` | URL of the Knowledge-Base service            |
 | `MODEL`                        | `claude-sonnet-4-6`     | Claude model used by all agents              |
 | `MAX_TOKENS`                   | `2048`                  | Max tokens per agent call                    |
 | `LATENCY_P95_THRESHOLD_MS`     | `500`                   | P95 WARNING threshold (ms)                   |
