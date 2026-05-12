@@ -142,3 +142,6 @@ Registro cronológico de todos os prompts desta sessão de trabalho com Claude C
 136. Atualiza o Glossário e inclua "Vector Database", Postmortem e KB (Knowledge Base), e outros termos que julgar necessário pela inclusão do Vector Database e KB no projeto.
 137. faz push pro GitHub
 138. Atualiza o prompts.md com as sessões de hoje
+139. Avalie se o código do projeto está seguindo as melhores práticas de desenvolvimento seguro, seguindo o guideline de OWASP e outros frameworks de segurança reconhecidos globalmente.
+140. Faz o commit e push dessas correções
+141. Atualiza o prompts.md com as sessões de hoje
