@@ -37,8 +37,10 @@ pytest tests/test_specialists.py -v
 ```
 Incident-Response-Agent/
   app/
-    main.py                    # FastAPI app, SecurityHeadersMiddleware, POST /analyze
-    config.py                  # Settings (ANTHROPIC_API_KEY, thresholds, model, kb_api_url)
+    main.py                    # FastAPI app, SecurityHeadersMiddleware, rate limiter, POST /analyze
+    config.py                  # Settings (ANTHROPIC_API_KEY, thresholds, model, kb_api_url, api_key)
+    auth.py                    # require_api_key — X-API-Key header validation (opt-in, disabled when API_KEY="")
+    limiter.py                 # slowapi Limiter singleton (60 req/min default; /analyze 10 req/min)
     agents/
       orchestrator.py          # Runs 4 specialists via asyncio.gather; queries KB for similar
                                # incidents; calls Claude to synthesize findings + KB context
@@ -84,7 +86,9 @@ POST /analyze
 - **KB enrichment** (`orchestrator.py`): after specialists complete, non-OK findings are joined into a natural-language query and sent to the KB. Matching chunks (`symptom_fingerprint`, `runbook_step`, `lesson_learned`) are injected into the synthesis prompt so Claude can ground recommendations in proven remediation steps. KB is **skipped entirely when all findings are OK** — zero overhead on healthy runs.
 - **KB graceful degradation** (`kb_client.py`): `search_kb()` catches all exceptions and returns `[]`, so a missing or slow KB service has zero impact on analysis. The 5s timeout prevents the KB from adding latency to the critical path.
 - **Graceful degradation**: JSON parse failures in specialist or orchestrator responses fall back to a safe `SpecialistFinding` / `IncidentReport` with WARNING severity and raw text details.
-- **Security**: returns `503` with empty body when `ANTHROPIC_API_KEY` is not configured; `SecurityHeadersMiddleware` adds `X-Content-Type-Options` and `Cross-Origin-Resource-Policy` to all responses.
+- **Security**: returns `503` with empty body when `ANTHROPIC_API_KEY` is not configured; `SecurityHeadersMiddleware` adds `X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security`, `Referrer-Policy`, and `Permissions-Policy` to all responses; `@app.exception_handler(Exception)` returns `{"error": "An internal error occurred"}` to prevent implementation details from leaking in 500 responses.
+- **Authentication** (`auth.py`): `require_api_key` validates `X-API-Key` header; auth is **opt-in** — disabled when `API_KEY=""` so development and tests work unchanged. Applied via `dependencies=[Depends(require_api_key)]` on `POST /analyze`.
+- **Rate limiting** (`limiter.py`): `slowapi` singleton with `SlowAPIMiddleware`; `POST /analyze` limited to `10/minute` per IP (each call triggers 5 Claude API calls).
 - **Testability**: tool handlers reference `_mc.function` (module-level lookup) so `patch("app.tools.metrics_client.X")` correctly intercepts calls inside lambdas at test time.
 - **Patch target convention**: orchestrator imports specialists via `from app.agents.specialists.X import create_X_agent`. Tests must patch `app.agents.orchestrator.create_X_agent` (the consumer module), not `app.agents.specialists.X.create_X_agent` (the source module) — patching the source has no effect on an already-imported name.
 
@@ -102,6 +106,8 @@ POST /analyze
 | `ERROR_RATE_5XX_THRESHOLD_PCT` | `5.0`                   | 5xx rate WARNING threshold (%)               |
 | `ERROR_RATE_4XX_THRESHOLD_PCT` | `20.0`                  | 4xx rate WARNING threshold (%)               |
 | `MEMORY_USAGE_THRESHOLD_PCT`   | `80.0`                  | Redis memory WARNING threshold (%)           |
+| `API_KEY`                      | _(empty)_               | X-API-Key value — empty disables auth        |
+| `ENABLE_DOCS`                  | `true`                  | Expose /docs, /redoc, /openapi.json          |
 
 ---
 
@@ -133,8 +139,10 @@ python3 ../scripts/seed_kb.py
 ```
 Knowledge-Base/
   app/
-    main.py               # FastAPI app, SecurityHeadersMiddleware
-    config.py             # Settings (QDRANT_URL, EMBEDDING_MODEL, EMBEDDING_DIM)
+    main.py               # FastAPI app, SecurityHeadersMiddleware, rate limiter, exception handler
+    config.py             # Settings (QDRANT_URL, QDRANT_API_KEY, EMBEDDING_MODEL, api_key)
+    auth.py               # require_api_key — X-API-Key header validation (opt-in)
+    limiter.py            # slowapi Limiter singleton (120 req/min default)
     dependencies.py       # @lru_cache singletons — get_embedding_service, get_qdrant_service
     models/
       chunk.py            # ChunkType (12 types), ChunkMetadata, KBChunkRequest/Response,
@@ -198,13 +206,16 @@ scripts/
 
 ### Environment Variables
 
-| Variable               | Default                 | Description                         |
-| ---------------------- | ----------------------- | ----------------------------------- |
-| `QDRANT_URL`           | `http://localhost:6333` | Qdrant connection URL               |
-| `QDRANT_COLLECTION`    | `incidents`             | Qdrant collection name              |
-| `EMBEDDING_MODEL`      | `all-MiniLM-L6-v2`      | sentence-transformers model name    |
-| `EMBEDDING_DIM`        | `384`                   | Vector dimension (must match model) |
-| `SEARCH_LIMIT_DEFAULT` | `10`                    | Default result count for search     |
+| Variable               | Default                 | Description                                  |
+| ---------------------- | ----------------------- | -------------------------------------------- |
+| `QDRANT_URL`           | `http://localhost:6333` | Qdrant connection URL                        |
+| `QDRANT_API_KEY`       | _(empty)_               | Qdrant API key — passed to AsyncQdrantClient |
+| `QDRANT_COLLECTION`    | `incidents`             | Qdrant collection name                       |
+| `EMBEDDING_MODEL`      | `all-MiniLM-L6-v2`      | sentence-transformers model name             |
+| `EMBEDDING_DIM`        | `384`                   | Vector dimension (must match model)          |
+| `SEARCH_LIMIT_DEFAULT` | `10`                    | Default result count for search              |
+| `API_KEY`              | _(empty)_               | X-API-Key value — empty disables auth        |
+| `ENABLE_DOCS`          | `true`                  | Expose /docs, /redoc, /openapi.json          |
 
 ---
 
@@ -237,12 +248,16 @@ redis-cli ping
 ```
 Log-Ingestion-and-Metrics/
   app/
-    main.py           # FastAPI app factory, mounts routers, lifespan (Redis pool)
+    main.py           # FastAPI app factory, mounts routers, lifespan (Redis pool), rate limiter
+    config.py         # Settings (REDIS_URL, api_key, enable_docs)
+    auth.py           # require_api_key — X-API-Key header validation (opt-in)
+    limiter.py        # slowapi Limiter singleton (300 req/min default; /logs 600 req/min)
     routers/
       ingest.py       # POST /logs — validates & processes HAProxy log entries
       metrics.py      # GET /metrics/* — reads aggregated data from Redis
     models/
-      log_entry.py    # Pydantic model for HAProxy JSON log schema
+      log_entry.py    # HAProxyLogEntry with Field constraints: max_length on strings,
+                      # ge/le on status_code (100-599), ge=0 on bytes_read, ge=-1 on time fields
     services/
       ingestion.py    # Business logic: parse log, update Redis counters
       metrics.py      # Business logic: query and format Redis metrics
@@ -290,6 +305,7 @@ Expected fields on `POST /logs`:
 - Response time percentiles (p50/p95/p99) are computed via `ZRANGEBYSCORE` on the `metrics:response_times` sorted set; the set is capped by a `ZREMRANGEBYRANK` trim after each insert to bound memory.
 - The Redis connection pool is created once at app startup via FastAPI `lifespan` and injected via `Depends`.
 - All ingestion logic is async to avoid blocking the event loop during Redis I/O.
+- **Input validation** (`log_entry.py`): `HAProxyLogEntry` fields are bounded — string fields capped (`client_ip` max 45 chars, names max 255, `http_request` max 8192, `termination_state` max 4); `status_code` validated between 100–599; time fields `ge=-1` (HAProxy uses -1 for N/A). Prevents Redis key injection and payload-based DoS.
 
 ### Environment Variables
 
@@ -298,6 +314,8 @@ Expected fields on `POST /logs`:
 | `REDIS_URL`                 | `redis://localhost:6379/0` | Redis connection string                      |
 | `RESPONSE_TIME_MAX_ENTRIES` | `100000`                   | Max entries in the response times sorted set |
 | `LOG_LEVEL`                 | `info`                     | Uvicorn log level                            |
+| `API_KEY`                   | _(empty)_                  | X-API-Key value — empty disables auth        |
+| `ENABLE_DOCS`               | `true`                     | Expose /docs, /redoc, /openapi.json          |
 
 ---
 
@@ -318,3 +336,47 @@ Four end-to-end scenarios validated with the Agentic AI Copilot skill, covering 
 - Redis > 80% + `noeviction` → imminent write failure → change eviction policy before touching data
 - 4xx dominant on critical endpoint → check specific code (401 = auth, 404 = routing, 429 = rate limit)
 - RPS = 0 + health check OK → upstream problem (load balancer, DNS, network), not application
+
+---
+
+## Security Architecture
+
+All three services share a common security layer validated with Bandit (SAST) and OWASP ZAP (DAST).
+
+### Shared security components (each service)
+
+| File                                | Responsibility                                                                                                    |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `app/auth.py`                       | `require_api_key` — validates `X-API-Key` header; opt-in (disabled when `API_KEY=""`)                             |
+| `app/limiter.py`                    | `slowapi` Limiter singleton — avoids circular imports with routers                                                |
+| `SecurityHeadersMiddleware`         | `X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security`, `Referrer-Policy`, `Permissions-Policy` |
+| `@app.exception_handler(Exception)` | Returns `{"error": "An internal error occurred"}` — prevents stack traces leaking in 500 responses                |
+
+### Rate limits
+
+| Endpoint                   | Limit      | Reason                                |
+| -------------------------- | ---------- | ------------------------------------- |
+| `POST /logs`               | 600/min    | HAProxy flood protection              |
+| `POST /analyze`            | 10/min     | Each call triggers 5 Claude API calls |
+| `POST /kb/ingest/incident` | 20/min     | Each call runs batch embedding        |
+| `POST /kb/ingest/chunk`    | 60/min     | Embedding + Qdrant write              |
+| `POST /kb/search`          | 60/min     | Embedding inference per query         |
+| All other endpoints        | 60–300/min | SlowAPIMiddleware global default      |
+
+### Protected endpoints (require `X-API-Key` when `API_KEY` is set)
+
+`POST /logs` · `POST /analyze` · `POST /kb/ingest/chunk` · `POST /kb/ingest/incident`
+
+### Production hardening checklist
+
+Set these variables in the root `.env` (never commit):
+
+```bash
+REDIS_PASSWORD=<strong-random>        # Redis auth via --requirepass
+# For Qdrant auth, also add to .env:
+QDRANT__SERVICE__API_KEY=<strong-key> # Qdrant service API key
+QDRANT_API_KEY=<same-strong-key>      # Knowledge-Base client key
+API_KEY=<strong-random>               # Shared X-API-Key for all services
+```
+
+And set `ENABLE_DOCS=false` in each service's env to hide `/docs`, `/redoc`, `/openapi.json`.
