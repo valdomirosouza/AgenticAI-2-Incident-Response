@@ -73,7 +73,7 @@ class ChunkMetadata(BaseModel):
 # ---------------------------------------------------------------------------
 
 class KBChunkRequest(BaseModel):
-    content: str = Field(..., min_length=1, description="Texto a ser embedado e armazenado")
+    content: str = Field(..., min_length=1, max_length=50_000, description="Texto a ser embedado e armazenado")
     metadata: ChunkMetadata
 
 
@@ -139,7 +139,7 @@ class IncidentIngestRequest(BaseModel):
     mttr_minutes: int | None = None
 
     # Each field below produces one or more chunks
-    summary: str
+    summary: str = Field(..., max_length=10_000)
     postmortem_text: str | None = None
     symptom_patterns: list[str] = Field(default_factory=list)
     log_excerpts: list[LogExcerpt] = Field(default_factory=list)
@@ -162,7 +162,7 @@ class IncidentIngestResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class SearchRequest(BaseModel):
-    query: str = Field(..., min_length=1)
+    query: str = Field(..., min_length=1, max_length=2000)
     limit: int = Field(default=10, ge=1, le=50)
     chunk_types: list[ChunkType] | None = None
     golden_signal: GoldenSignal | None = None

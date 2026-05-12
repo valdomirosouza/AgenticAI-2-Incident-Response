@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     embedding_dim: int = 384
     search_limit_default: int = 10
     log_level: str = "info"
+    enable_docs: bool = True  # set to False in production
 
     model_config = {"env_file": ".env"}
 

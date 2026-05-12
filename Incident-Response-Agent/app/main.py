@@ -15,6 +15,9 @@ app = FastAPI(
     title="Incident Response Agent",
     description="Multi-agent AI copilot for MTTD/MTTR reduction — PPGCA/Unisinos",
     version="1.0.0",
+    docs_url="/docs" if _cfg.settings.enable_docs else None,
+    redoc_url="/redoc" if _cfg.settings.enable_docs else None,
+    openapi_url="/openapi.json" if _cfg.settings.enable_docs else None,
 )
 
 
@@ -22,7 +25,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
 
 
