@@ -14,7 +14,8 @@ class Settings(BaseSettings):
     latency_p99_threshold_ms: float = 1000.0
     memory_usage_threshold_pct: float = 80.0
 
-    enable_docs: bool = True  # set to False in production
+    api_key: str = ""          # set API_KEY env var to enable authentication
+    enable_docs: bool = True   # set to False in production
 
     model_config = {"env_file": ".env"}
 

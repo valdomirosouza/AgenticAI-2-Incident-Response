@@ -6,8 +6,10 @@ services:
       - "8000:8000"
     env_file:
       - ./Log-Ingestion-and-Metrics/.env.example
+      - path: ./.env
+        required: false
     environment:
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/0
     depends_on:
       redis:
         condition: service_healthy
@@ -33,6 +35,8 @@ services:
       - ./Incident-Response-Agent/.env.example
       - path: ./Incident-Response-Agent/.env
         required: false
+      - path: ./.env
+        required: false
     environment:
       METRICS_API_URL: http://api:8000
       KB_API_URL: http://knowledge-base:8002
@@ -48,8 +52,11 @@ services:
       - "8002:8002"
     env_file:
       - ./Knowledge-Base/.env.example
+      - path: ./.env
+        required: false
     environment:
       QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
     depends_on:
       qdrant:
         condition: service_healthy
@@ -68,8 +75,17 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: >
+      sh -c "if [ -n '$$REDIS_PASSWORD' ]; then
+        redis-server --requirepass $$REDIS_PASSWORD;
+      else
+        redis-server;
+      fi"
     ports:
       - "6379:6379"
+    env_file:
+      - path: ./.env
+        required: false
     volumes:
       - redis_data:/data
     healthcheck:
@@ -83,7 +99,8 @@ services:
     image: qdrant/qdrant:v1.18.0
     ports:
       - "6333:6333"
-      - "6334:6334"
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:

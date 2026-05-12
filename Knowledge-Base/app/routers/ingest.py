@@ -1,8 +1,10 @@
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from app.auth import require_api_key
 from app.dependencies import get_embedding_service, get_qdrant_service
+from app.limiter import limiter
 from app.models.chunk import (
     IncidentIngestRequest,
     IncidentIngestResponse,
@@ -16,8 +18,11 @@ from app.services.qdrant_service import QdrantService
 router = APIRouter(prefix="/kb", tags=["ingest"])
 
 
-@router.post("/ingest/chunk", response_model=KBChunkResponse, status_code=201)
+@router.post("/ingest/chunk", response_model=KBChunkResponse, status_code=201,
+             dependencies=[Depends(require_api_key)])
+@limiter.limit("60/minute")
 async def ingest_chunk(
+    request: Request,
     body: KBChunkRequest,
     embeddings: EmbeddingService = Depends(get_embedding_service),
     qdrant: QdrantService = Depends(get_qdrant_service),
@@ -28,8 +33,11 @@ async def ingest_chunk(
     return KBChunkResponse(id=chunk_id, content=body.content, metadata=body.metadata)
 
 
-@router.post("/ingest/incident", response_model=IncidentIngestResponse, status_code=201)
+@router.post("/ingest/incident", response_model=IncidentIngestResponse, status_code=201,
+             dependencies=[Depends(require_api_key)])
+@limiter.limit("20/minute")
 async def ingest_incident(
+    request: Request,
     body: IncidentIngestRequest,
     embeddings: EmbeddingService = Depends(get_embedding_service),
     qdrant: QdrantService = Depends(get_qdrant_service),

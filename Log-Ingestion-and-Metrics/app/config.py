@@ -8,7 +8,8 @@ class Settings(BaseSettings):
     log_format: str = "json"
     otel_service_name: str = "log-ingestion-and-metrics"
     otel_exporter_otlp_endpoint: str = ""
-    enable_docs: bool = True  # set to False in production
+    api_key: str = ""          # set API_KEY env var to enable authentication
+    enable_docs: bool = True   # set to False in production
 
     model_config = {"env_file": ".env"}
 
