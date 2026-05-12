@@ -150,3 +150,5 @@ Registro cronológico de todos os prompts desta sessão de trabalho com Claude C
 144. os Gaps remanescentes (infraestrutura / design) foram resolvidos? Em caso negativo, como faço para resolve-los?
 145. Implementa todos os gaps
 146. Atualiza o prompts.md com as sessões de hoje
+147. Rode os testes de TDD, SAST e DAST em todo o projeto
+148. Atualiza o prompts.md com as sessões de hoje
